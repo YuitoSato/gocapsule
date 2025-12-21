@@ -1,11 +1,11 @@
 package main
 
 import (
-	"gocapsule/pkg/analyzer"
+	"gocapsule/gocapsule"
 
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
 func main() {
-	singlechecker.Main(analyzer.Analyzer)
+	singlechecker.Main(gocapsule.Analyzer)
 }

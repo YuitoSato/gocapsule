@@ -1,4 +1,4 @@
-package analyzer
+package gocapsule
 
 import (
 	"golang.org/x/tools/go/analysis"

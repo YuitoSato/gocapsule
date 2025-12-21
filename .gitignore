@@ -1,5 +1,6 @@
-# Binary
+# Binary (root level only, not the gocapsule/ directory)
 /gocapsule
+!/gocapsule/
 
 # IDE
 .idea/

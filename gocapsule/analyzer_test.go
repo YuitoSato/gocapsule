@@ -1,9 +1,9 @@
-package analyzer_test
+package gocapsule_test
 
 import (
 	"testing"
 
-	"gocapsule/pkg/analyzer"
+	"gocapsule/gocapsule"
 
 	"golang.org/x/tools/go/analysis/analysistest"
 )
@@ -13,7 +13,7 @@ func TestAnalyzer(t *testing.T) {
 
 	// Run tests on all test packages
 	// The order matters: target must be analyzed before external
-	analysistest.Run(t, testdata, analyzer.Analyzer,
+	analysistest.Run(t, testdata, gocapsule.Analyzer,
 		"target",
 		"external",
 	)
