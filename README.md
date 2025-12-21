@@ -11,13 +11,46 @@ A Go linter that enforces encapsulation by preventing direct struct creation and
 ## Installation
 
 ```bash
-go install github.com/YuitoSato/gocapsule/cmd/gocapsule@latest
+go install github.com/YuitoSato/gocapsule@latest
 ```
 
 ## Usage
 
+### Standalone
+
 ```bash
 gocapsule ./...
+```
+
+### With golangci-lint
+
+1. Create `.custom-gcl.yml`:
+
+```yaml
+version: v2.7.2
+plugins:
+  - module: 'github.com/YuitoSato/gocapsule'
+    import: 'github.com/YuitoSato/gocapsule/gocapsule'
+    version: v0.1.0
+```
+
+2. Add to `.golangci.yml`:
+
+```yaml
+linters:
+  enable:
+    - gocapsule
+  settings:
+    custom:
+      gocapsule:
+        type: "module"
+```
+
+3. Build and run:
+
+```bash
+golangci-lint custom
+./custom-gcl run ./...
 ```
 
 ## Example
