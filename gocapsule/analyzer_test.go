@@ -3,7 +3,7 @@ package gocapsule_test
 import (
 	"testing"
 
-	"gocapsule/gocapsule"
+	"github.com/YuitoSato/gocapsule/gocapsule"
 
 	"golang.org/x/tools/go/analysis/analysistest"
 )

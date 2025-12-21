@@ -1,7 +1,7 @@
 package main
 
 import (
-	"gocapsule/gocapsule"
+	"github.com/YuitoSato/gocapsule/gocapsule"
 
 	"golang.org/x/tools/go/analysis/singlechecker"
 )

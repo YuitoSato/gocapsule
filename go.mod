@@ -1,4 +1,4 @@
-module gocapsule
+module github.com/YuitoSato/gocapsule
 
 go 1.24.0
 
