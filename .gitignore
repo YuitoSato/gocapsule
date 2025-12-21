@@ -1,0 +1,9 @@
+# Binary
+/gocapsule
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
