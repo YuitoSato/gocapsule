@@ -24,5 +24,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	// Phase 2: Detect violations (struct literals and field assignments)
 	detectViolations(pass, inspect)
 
+	// Phase 3: Check that constructors specify all struct fields
+	checkConstructorCompleteness(pass, inspect)
+
 	return nil, nil
 }

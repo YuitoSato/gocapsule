@@ -16,5 +16,6 @@ func TestAnalyzer(t *testing.T) {
 	analysistest.Run(t, testdata, gocapsule.Analyzer,
 		"target",
 		"external",
+		"completeness",
 	)
 }

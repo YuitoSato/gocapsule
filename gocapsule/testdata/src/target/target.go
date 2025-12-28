@@ -40,8 +40,8 @@ type Container struct { // want Container:`&\{NewContainer\}`
 }
 
 // NewContainer creates a new Container
-func NewContainer(user *User) *Container {
-	return &Container{User: *user}
+func NewContainer(user *User, extra string) *Container {
+	return &Container{User: *user, Extra: extra}
 }
 
 // InternalUsage shows that same-package usage is allowed

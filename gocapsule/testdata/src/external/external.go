@@ -29,7 +29,7 @@ func CreateUser() {
 }
 
 func TestEmbeddedAccess() {
-	container := target.NewContainer(target.NewUser("test", "test@test.com", 25))
+	container := target.NewContainer(target.NewUser("test", "test@test.com", 25), "extra")
 
 	// Violation: accessing embedded field from external package
 	container.Name = "modified" // want `direct field assignment to User.Name is not allowed; User has a constructor NewUser\(\)`
