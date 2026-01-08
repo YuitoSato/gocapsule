@@ -31,36 +31,36 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 			return
 		}
 
-		// Extract the struct name from the constructor name
-		structName := extractStructName(funcName)
-		if structName == "" {
+		// Extract the type name from the constructor name
+		typeName := extractTypeName(funcName)
+		if typeName == "" {
 			return
 		}
 
-		// Find the return type and verify it's a pointer to a struct
+		// Find the return type
 		returnType := getConstructorReturnType(pass, funcDecl)
 		if returnType == nil {
 			return
 		}
 
-		// Get the named type and verify it matches the expected struct name
-		namedType := extractNamedStructType(returnType)
+		// Get the named type and verify it matches the expected type name
+		namedType := extractNamedType(returnType)
 		if namedType == nil {
 			return
 		}
 
-		// Verify the struct name matches
-		if !strings.EqualFold(namedType.Obj().Name(), structName) {
+		// Verify the type name matches
+		if !strings.EqualFold(namedType.Obj().Name(), typeName) {
 			return
 		}
 
-		// Verify the struct is defined in the current package
+		// Verify the type is defined in the current package
 		if namedType.Obj().Pkg() != pass.Pkg {
 			return
 		}
 
-		// Export the fact for this struct type
-		fact := &EncapsulatedStruct{
+		// Export the fact for this type
+		fact := &EncapsulatedType{
 			ConstructorName: funcName,
 		}
 		pass.ExportObjectFact(namedType.Obj(), fact)
@@ -79,9 +79,9 @@ func isConstructorName(name string) bool {
 	return name[3] >= 'A' && name[3] <= 'Z'
 }
 
-// extractStructName extracts the struct name from a constructor name.
-// "NewUser" -> "User", "NewHTTPClient" -> "HTTPClient"
-func extractStructName(constructorName string) string {
+// extractTypeName extracts the type name from a constructor name.
+// "NewUser" -> "User", "NewHTTPClient" -> "HTTPClient", "NewEmail" -> "Email"
+func extractTypeName(constructorName string) string {
 	if len(constructorName) <= 3 {
 		return ""
 	}
@@ -114,9 +114,9 @@ func getConstructorReturnType(pass *analysis.Pass, funcDecl *ast.FuncDecl) types
 	return results.At(0).Type()
 }
 
-// extractNamedStructType extracts the named struct type from a type.
-// Handles both *T and T where T is a struct.
-func extractNamedStructType(typ types.Type) *types.Named {
+// extractNamedType extracts the named type from a type.
+// Handles both *T and T where T is a named type (struct or defined type).
+func extractNamedType(typ types.Type) *types.Named {
 	// Dereference pointer if necessary
 	if ptr, ok := typ.(*types.Pointer); ok {
 		typ = ptr.Elem()
@@ -125,11 +125,6 @@ func extractNamedStructType(typ types.Type) *types.Named {
 	// Get the named type
 	named, ok := typ.(*types.Named)
 	if !ok {
-		return nil
-	}
-
-	// Verify the underlying type is a struct
-	if _, ok := named.Underlying().(*types.Struct); !ok {
 		return nil
 	}
 

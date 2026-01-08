@@ -15,6 +15,7 @@ func detectViolations(pass *analysis.Pass, inspect *inspector.Inspector) {
 	nodeFilter := []ast.Node{
 		(*ast.CompositeLit)(nil),
 		(*ast.AssignStmt)(nil),
+		(*ast.CallExpr)(nil),
 	}
 
 	inspect.Preorder(nodeFilter, func(n ast.Node) {
@@ -23,6 +24,8 @@ func detectViolations(pass *analysis.Pass, inspect *inspector.Inspector) {
 			checkCompositeLit(pass, node)
 		case *ast.AssignStmt:
 			checkAssignment(pass, node)
+		case *ast.CallExpr:
+			checkTypeConversion(pass, node)
 		}
 	})
 }
@@ -41,8 +44,8 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		return
 	}
 
-	// Extract the named struct type (handle pointers)
-	namedType := extractNamedStructType(typ)
+	// Extract the named type (handle pointers)
+	namedType := extractNamedType(typ)
 	if namedType == nil {
 		return
 	}
@@ -52,8 +55,8 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		return
 	}
 
-	// Check if the struct has an EncapsulatedStruct fact
-	var fact EncapsulatedStruct
+	// Check if the struct has an EncapsulatedType fact
+	var fact EncapsulatedType
 	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
 		return // No constructor exists for this struct
 	}
@@ -61,6 +64,54 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 	// Report violation
 	pass.Reportf(lit.Pos(),
 		"direct struct literal creation of %s is not allowed; use %s.%s() instead",
+		namedType.Obj().Name(),
+		namedType.Obj().Pkg().Name(),
+		fact.ConstructorName,
+	)
+}
+
+// checkTypeConversion checks if a type conversion creates an encapsulated
+// defined type from an external package.
+func checkTypeConversion(pass *analysis.Pass, call *ast.CallExpr) {
+	// Type conversions look like function calls but the "function" is a type
+	// e.g., Email("test") where Email is a defined type
+
+	// Check if this is a type conversion (not a function call)
+	tv, ok := pass.TypesInfo.Types[call.Fun]
+	if !ok {
+		return
+	}
+
+	// If it's not a type (IsType), it's a function call, not a type conversion
+	if !tv.IsType() {
+		return
+	}
+
+	// Get the named type
+	namedType := extractNamedType(tv.Type)
+	if namedType == nil {
+		return
+	}
+
+	// Skip structs - they are handled by checkCompositeLit
+	if _, ok := namedType.Underlying().(*types.Struct); ok {
+		return
+	}
+
+	// Skip if the type is defined in the current package
+	if isLocalType(pass, namedType) {
+		return
+	}
+
+	// Check if the type has an EncapsulatedType fact
+	var fact EncapsulatedType
+	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
+		return // No constructor exists for this type
+	}
+
+	// Report violation
+	pass.Reportf(call.Pos(),
+		"direct type conversion to %s is not allowed; use %s.%s() instead",
 		namedType.Obj().Name(),
 		namedType.Obj().Pkg().Name(),
 		fact.ConstructorName,
@@ -110,8 +161,8 @@ func checkFieldAssignment(pass *analysis.Pass, expr ast.Expr) {
 		return
 	}
 
-	// Check if the struct has an EncapsulatedStruct fact
-	var fact EncapsulatedStruct
+	// Check if the struct has an EncapsulatedType fact
+	var fact EncapsulatedType
 	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
 		return
 	}

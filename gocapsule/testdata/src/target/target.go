@@ -51,4 +51,19 @@ func InternalUsage() {
 
 	user := NewUser("test", "test@test.com", 30)
 	user.Name = "modified" // OK: same package can modify fields
+
+	// OK: same package can use type conversion directly
+	_ = Email("internal@test.com")
 }
+
+// Email is a defined type with a constructor
+type Email string // want Email:`&\{NewEmail\}`
+
+// NewEmail creates a validated Email
+func NewEmail(s string) Email {
+	// In real code, this would validate the email format
+	return Email(s)
+}
+
+// Token is a defined type without a constructor (should be allowed)
+type Token string
