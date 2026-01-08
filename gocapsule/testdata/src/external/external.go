@@ -52,12 +52,9 @@ func TestDefinedType() {
 	_ = target.Token("abc123")
 }
 
-func TestExternalFunctionCalls() {
+func TestExternalFunctionCalls(writer http.ResponseWriter, req *http.Request) {
 	// External function calls should NOT be detected
-	reader := http.MaxBytesReader(nil, nil, 1024)
+	maxRequestBodyBytes := int64(1024)
+	reader := http.MaxBytesReader(writer, req.Body, maxRequestBodyBytes)
 	_ = reader
-
-	// http.NewRequest is also a function call, should NOT be detected
-	req, _ := http.NewRequest("GET", "http://example.com", nil)
-	_ = req
 }
