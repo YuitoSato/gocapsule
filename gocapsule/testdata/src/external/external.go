@@ -43,7 +43,7 @@ func TestDefinedType() {
 	_ = target.Email("test@example.com") // want `direct type conversion to Email is not allowed; use target.NewEmail\(\) instead`
 
 	// OK: using constructor
-	_ = target.NewEmail("test@example.com")
+	_, _ = target.NewEmail("test@example.com")
 
 	// OK: Token has no constructor, so direct type conversion is allowed
 	_ = target.Token("abc123")

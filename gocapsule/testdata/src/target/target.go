@@ -60,9 +60,9 @@ func InternalUsage() {
 type Email string // want Email:`&\{NewEmail\}`
 
 // NewEmail creates a validated Email
-func NewEmail(s string) Email {
+func NewEmail(s string) (Email, error) {
 	// In real code, this would validate the email format
-	return Email(s)
+	return Email(s), nil
 }
 
 // Token is a defined type without a constructor (should be allowed)

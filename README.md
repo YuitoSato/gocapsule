@@ -100,9 +100,9 @@ Defined types with constructors are also protected:
 // package email
 type Email string
 
-func NewEmail(s string) Email {
+func NewEmail(s string) (Email, error) {
     // validate email format
-    return Email(s)
+    return Email(s), nil
 }
 ```
 
@@ -116,7 +116,7 @@ func main() {
     // -> "direct type conversion to Email is not allowed; use email.NewEmail() instead"
 
     // OK: using constructor
-    e := email.NewEmail("test@example.com")
+    e, err := email.NewEmail("test@example.com")
 }
 ```
 
