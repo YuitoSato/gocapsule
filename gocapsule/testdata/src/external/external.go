@@ -1,6 +1,9 @@
 package external
 
-import "target"
+import (
+	"net/http"
+	"target"
+)
 
 func CreateUser() {
 	// Violation: direct struct literal creation
@@ -47,4 +50,14 @@ func TestDefinedType() {
 
 	// OK: Token has no constructor, so direct type conversion is allowed
 	_ = target.Token("abc123")
+}
+
+func TestExternalFunctionCalls() {
+	// External function calls should NOT be detected
+	reader := http.MaxBytesReader(nil, nil, 1024)
+	_ = reader
+
+	// http.NewRequest is also a function call, should NOT be detected
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	_ = req
 }
