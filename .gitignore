@@ -2,6 +2,9 @@
 /gocapsule
 !/gocapsule/
 
+# Build artifacts
+/dist/
+
 # IDE
 .idea/
 .vscode/
