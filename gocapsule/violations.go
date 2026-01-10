@@ -55,6 +55,11 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		return
 	}
 
+	// Skip ignored packages
+	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
+		return
+	}
+
 	// Check if the struct has an EncapsulatedType fact
 	var fact EncapsulatedType
 	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
@@ -100,6 +105,11 @@ func checkTypeConversion(pass *analysis.Pass, call *ast.CallExpr) {
 
 	// Skip if the type is defined in the current package
 	if isLocalType(pass, namedType) {
+		return
+	}
+
+	// Skip ignored packages
+	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
 		return
 	}
 
@@ -158,6 +168,11 @@ func checkFieldAssignment(pass *analysis.Pass, expr ast.Expr) {
 
 	// Skip if the struct is defined in the current package
 	if isLocalType(pass, namedType) {
+		return
+	}
+
+	// Skip ignored packages
+	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
 		return
 	}
 
@@ -248,4 +263,17 @@ func isLocalType(pass *analysis.Pass, named *types.Named) bool {
 	typePath := strings.TrimSuffix(typePkg.Path(), "_test")
 
 	return currentPath == typePath
+}
+
+// shouldIgnorePackage checks if a package path is in the ignore list.
+func shouldIgnorePackage(pkgPath string) bool {
+	if ignorePackages == "" {
+		return false
+	}
+	for _, ignored := range strings.Split(ignorePackages, ",") {
+		if strings.TrimSpace(ignored) == pkgPath {
+			return true
+		}
+	}
+	return false
 }
