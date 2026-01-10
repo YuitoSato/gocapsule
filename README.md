@@ -23,6 +23,16 @@ go install github.com/YuitoSato/gocapsule@latest
 gocapsule ./...
 ```
 
+### With Flags
+
+#### Ignore Specific Packages
+
+Use the `-ignorePackages` flag to exclude specific packages from analysis. This is useful for ignoring standard library packages like `net/http` that have constructors but are used in legitimate ways.
+
+```bash
+gocapsule -ignorePackages="net/http,database/sql" ./...
+```
+
 ### With golangci-lint
 
 1. Create `.custom-gcl.yml`:

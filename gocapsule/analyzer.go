@@ -6,6 +6,9 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 )
 
+// ignorePackages is a comma-separated list of package paths to ignore.
+var ignorePackages string
+
 // Analyzer is the gocapsule analyzer that enforces encapsulation.
 var Analyzer = &analysis.Analyzer{
 	Name:      "gocapsule",
@@ -13,6 +16,11 @@ var Analyzer = &analysis.Analyzer{
 	Run:       run,
 	Requires:  []*analysis.Analyzer{inspect.Analyzer},
 	FactTypes: []analysis.Fact{new(EncapsulatedType)},
+}
+
+func init() {
+	Analyzer.Flags.StringVar(&ignorePackages, "ignorePackages", "",
+		"comma-separated list of package paths to ignore (e.g., net/http,database/sql)")
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
