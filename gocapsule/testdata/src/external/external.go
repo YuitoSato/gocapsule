@@ -48,3 +48,18 @@ func TestDefinedType() {
 	// OK: Token has no constructor, so direct type conversion is allowed
 	_ = target.Token("abc123")
 }
+
+func TestAnnotationBasedConstructor() {
+	// Violation: annotation-based constructor with non-matching name pattern
+	_ = &target.Product{ID: "test"} // want `direct struct literal creation of Product is not allowed; use target.NewDefaultProduct\(\) instead`
+
+	// OK: using constructor
+	_ = target.NewDefaultProduct()
+
+	// Violation: annotation-based constructor with tuple return value
+	_ = &target.Order{ID: "test"} // want `direct struct literal creation of Order is not allowed; use target.NewOrderFromProduct\(\) instead`
+
+	// Violation: field reassignment on annotation-based constructor
+	product := target.NewDefaultProduct()
+	product.Name = "modified" // want `direct field assignment to Product.Name is not allowed; Product has a constructor NewDefaultProduct\(\)`
+}

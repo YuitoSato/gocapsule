@@ -67,3 +67,24 @@ func NewEmail(s string) (Email, error) {
 
 // Token is a defined type without a constructor (should be allowed)
 type Token string
+
+// Product - Tests annotation-based constructor with non-matching name pattern
+type Product struct { // want Product:`&\{NewDefaultProduct\}`
+	ID   string
+	Name string
+}
+
+// gocapsule:constructor
+func NewDefaultProduct() *Product {
+	return &Product{ID: "default", Name: "Default Product"}
+}
+
+// Order - Tests annotation-based constructor with tuple return value
+type Order struct { // want Order:`&\{NewOrderFromProduct\}`
+	ID string
+}
+
+// gocapsule:constructor
+func NewOrderFromProduct(p *Product) (*Order, error) {
+	return &Order{ID: p.ID}, nil
+}
