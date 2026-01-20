@@ -137,6 +137,21 @@ func main() {
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported
 
+## Limitations
+
+gocapsule enforces constructor usage and blocks **field reassignment**, but does **not** detect content mutation of slices, maps, or pointers:
+
+| Pattern | Detected? |
+|---------|-----------|
+| `u := &user.User{Name: "x"}` | ✅ Yes |
+| `u.Name = "modified"` | ✅ Yes |
+| `e := email.Email("invalid")` | ✅ Yes |
+| `cart.Order.Amount = 0` (embedded) | ✅ Yes |
+| `u.Roles[0] = "hacker"` (slice element) | ❌ No |
+| `c.Settings["key"] = "value"` (map value) | ❌ No |
+| `roles[0] = "x"` after `NewUser(roles)` | ❌ No |
+| `dept.Manager.Salary = 0` (pointer field) | ❌ No |
+
 ## License
 
 MIT
