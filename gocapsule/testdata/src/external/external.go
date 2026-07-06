@@ -13,7 +13,7 @@ func CreateUser() {
 	user := target.NewUser("name", "email@test.com", 25)
 
 	// Violation: field reassignment
-	user.Name = "new name"   // want `direct field assignment to User.Name is not allowed; User has a constructor NewUser\(\)`
+	user.Name = "new name"      // want `direct field assignment to User.Name is not allowed; User has a constructor NewUser\(\)`
 	user.Email = "new@test.com" // want `direct field assignment to User.Email is not allowed; User has a constructor NewUser\(\)`
 
 	// OK: Config has no constructor, so direct creation is allowed
@@ -47,4 +47,15 @@ func TestDefinedType() {
 
 	// OK: Token has no constructor, so direct type conversion is allowed
 	_ = target.Token("abc123")
+}
+
+func TestPlainNewConstructor() {
+	// Violation: direct struct literal creation
+	_ = &target.Repository{Name: "test"} // want `direct struct literal creation of Repository is not allowed; use target.New\(\) instead`
+
+	// OK: using constructor
+	repo := target.New("test")
+
+	// Violation: field reassignment
+	repo.Name = "modified" // want `direct field assignment to Repository.Name is not allowed; Repository has a constructor New\(\)`
 }

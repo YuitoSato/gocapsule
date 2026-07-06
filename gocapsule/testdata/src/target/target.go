@@ -67,3 +67,13 @@ func NewEmail(s string) (Email, error) {
 
 // Token is a defined type without a constructor (should be allowed)
 type Token string
+
+// Repository is a struct constructed by a plain New() constructor
+type Repository struct { // want Repository:`&\{New\}`
+	Name string
+}
+
+// New creates a new Repository
+func New(name string) *Repository {
+	return &Repository{Name: name}
+}
