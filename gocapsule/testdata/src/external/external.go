@@ -13,7 +13,7 @@ func CreateUser() {
 	user := target.NewUser("name", "email@test.com", 25)
 
 	// Violation: field reassignment
-	user.Name = "new name"   // want `direct field assignment to User.Name is not allowed; User has a constructor NewUser\(\)`
+	user.Name = "new name"      // want `direct field assignment to User.Name is not allowed; User has a constructor NewUser\(\)`
 	user.Email = "new@test.com" // want `direct field assignment to User.Email is not allowed; User has a constructor NewUser\(\)`
 
 	// OK: Config has no constructor, so direct creation is allowed
