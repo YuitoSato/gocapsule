@@ -4,7 +4,7 @@ A Go linter that enforces encapsulation by preventing direct struct creation, ty
 
 ## Features
 
-- **Prevent direct struct literal creation**: If a package has a `NewXxx` constructor, external packages cannot create the struct directly using struct literals
+- **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals
 - **Prevent direct type conversion**: For defined types (e.g., `type Email string`) with constructors, external packages cannot use direct type conversions
 - **Prevent field reassignment**: External packages cannot reassign public fields of structs that have constructors
 - **Embedded field support**: Detects violations through embedded field access (e.g., `container.User.Name = "x"`)
@@ -132,7 +132,7 @@ func main() {
 
 ## Rules
 
-1. **Constructor pattern**: Functions matching `New[A-Z]*` that return `*TypeName` or `TypeName`
+1. **Constructor pattern**: Functions named exactly `New`, or matching `New[A-Z]*` that return `*TypeName` or `TypeName`.
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported

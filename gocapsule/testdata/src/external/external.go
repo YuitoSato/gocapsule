@@ -48,3 +48,14 @@ func TestDefinedType() {
 	// OK: Token has no constructor, so direct type conversion is allowed
 	_ = target.Token("abc123")
 }
+
+func TestPlainNewConstructor() {
+	// Violation: direct struct literal creation
+	_ = &target.Repository{Name: "test"} // want `direct struct literal creation of Repository is not allowed; use target.New\(\) instead`
+
+	// OK: using constructor
+	repo := target.New("test")
+
+	// Violation: field reassignment
+	repo.Name = "modified" // want `direct field assignment to Repository.Name is not allowed; Repository has a constructor New\(\)`
+}
