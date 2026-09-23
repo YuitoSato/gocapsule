@@ -6,28 +6,24 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/ast/inspector"
 )
 
 // detectViolations checks for struct literal creation and field assignment
 // violations from external packages.
-func detectViolations(pass *analysis.Pass, inspect *inspector.Inspector) {
-	nodeFilter := []ast.Node{
-		(*ast.CompositeLit)(nil),
-		(*ast.AssignStmt)(nil),
-		(*ast.CallExpr)(nil),
+func detectViolations(pass *analysis.Pass) {
+	for _, file := range pass.Files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.CompositeLit:
+				checkCompositeLit(pass, node)
+			case *ast.AssignStmt:
+				checkAssignment(pass, node)
+			case *ast.CallExpr:
+				checkTypeConversion(pass, node)
+			}
+			return true
+		})
 	}
-
-	inspect.Preorder(nodeFilter, func(n ast.Node) {
-		switch node := n.(type) {
-		case *ast.CompositeLit:
-			checkCompositeLit(pass, node)
-		case *ast.AssignStmt:
-			checkAssignment(pass, node)
-		case *ast.CallExpr:
-			checkTypeConversion(pass, node)
-		}
-	})
 }
 
 // checkCompositeLit checks if a composite literal creates an encapsulated struct
