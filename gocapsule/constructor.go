@@ -9,12 +9,18 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 )
 
-// exportConstructorFacts scans the current package for New** functions
-// and exports facts for their corresponding struct types.
+// exportConstructorFacts scans the current package for constructor functions
+// (New or New*) and exports a fact for each type they return.
 func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 	nodeFilter := []ast.Node{
 		(*ast.FuncDecl)(nil),
 	}
+
+	// A type may have several constructors (e.g. New, NewUser, NewUserFromDTO).
+	// Collect them all first so that exactly one fact is exported per type,
+	// with a deterministic constructor name in diagnostics.
+	constructors := map[*types.TypeName][]string{}
+	var order []*types.TypeName
 
 	inspect.Preorder(nodeFilter, func(n ast.Node) {
 		funcDecl := n.(*ast.FuncDecl)
@@ -26,14 +32,10 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 
 		funcName := funcDecl.Name.Name
 
-		// Check if function name matches New** pattern
+		// Check if function name matches the New / New* pattern
 		if !isConstructorName(funcName) {
 			return
 		}
-
-		// Extract the type name from the constructor name.
-		// Empty for a plain "New" constructor.
-		typeNameInFuncName := extractTypeName(funcName)
 
 		// Find the return type
 		returnType := getConstructorReturnType(pass, funcDecl)
@@ -41,14 +43,9 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 			return
 		}
 
-		// Get the named type and verify it matches the expected type name
+		// Get the named type
 		namedType := extractNamedType(returnType)
 		if namedType == nil {
-			return
-		}
-
-		// Verify the type name matches (skipped for plain "New")
-		if typeNameInFuncName != "" && !strings.EqualFold(namedType.Obj().Name(), typeNameInFuncName) {
 			return
 		}
 
@@ -57,15 +54,23 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 			return
 		}
 
-		// Export the fact for this type
-		fact := &EncapsulatedType{
-			ConstructorName: funcName,
+		obj := namedType.Obj()
+		if _, seen := constructors[obj]; !seen {
+			order = append(order, obj)
 		}
-		pass.ExportObjectFact(namedType.Obj(), fact)
+		constructors[obj] = append(constructors[obj], funcName)
 	})
+
+	for _, obj := range order {
+		pass.ExportObjectFact(obj, &EncapsulatedType{
+			ConstructorName: preferredConstructorName(obj.Name(), constructors[obj]),
+		})
+	}
 }
 
-// isConstructorName checks if a function name matches the New** pattern.
+// isConstructorName reports whether a function name is a constructor name:
+// exactly "New", or "New" followed by an uppercase letter ("NewUser", "NewRouter").
+// The suffix does not need to match the returned type name.
 func isConstructorName(name string) bool {
 	if name == "New" {
 		return true
@@ -80,16 +85,25 @@ func isConstructorName(name string) bool {
 	return name[3] >= 'A' && name[3] <= 'Z'
 }
 
-// extractTypeName extracts the type name from a constructor name.
-// "NewUser" -> "User", "NewHTTPClient" -> "HTTPClient", "New" -> ""
-func extractTypeName(constructorName string) string {
-	if len(constructorName) <= 3 {
-		return ""
+// preferredConstructorName picks the constructor name shown in diagnostics when
+// a type has several constructors: New<TypeName> first, then New, then the first
+// one declared in the package.
+func preferredConstructorName(typeName string, names []string) string {
+	for _, n := range names {
+		if strings.EqualFold(n, "New"+typeName) {
+			return n
+		}
 	}
-	return constructorName[3:]
+	for _, n := range names {
+		if n == "New" {
+			return n
+		}
+	}
+	return names[0]
 }
 
-// getConstructorReturnType extracts the return type from a function declaration.
+// getConstructorReturnType extracts the constructed type from a function declaration.
+// Only the first result is considered, so (T, error) is treated as T.
 func getConstructorReturnType(pass *analysis.Pass, funcDecl *ast.FuncDecl) types.Type {
 	if funcDecl.Type.Results == nil || len(funcDecl.Type.Results.List) == 0 {
 		return nil
@@ -111,7 +125,7 @@ func getConstructorReturnType(pass *analysis.Pass, funcDecl *ast.FuncDecl) types
 		return nil
 	}
 
-	// Return the first return value (ignore error returns)
+	// Return the first result (additional results such as error are ignored)
 	return results.At(0).Type()
 }
 

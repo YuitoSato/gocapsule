@@ -167,10 +167,11 @@ func main() {
 
 ## Rules
 
-1. **Constructor pattern**: Package-level functions named exactly `New`, or `New` followed by the type name (case-insensitive, e.g. `NewUser` for `User`, `NewHTTPClient` for `HTTPClient`), whose first return value is `*TypeName` or `TypeName` of a type declared in the same package. Additional return values such as `error` are ignored, so `NewEmail() (Email, error)` and `New() (*Repository, error)` count as constructors
+1. **Constructor pattern**: Package-level functions named `New`, or `New` followed by an uppercase letter (`NewUser`, `NewRouter`, `NewFromConfig`), whose first return value is `*TypeName` or `TypeName` of a type declared in the same package. The suffix does not have to match the type name: `NewRouter() *Mux` makes `Mux` encapsulated. Additional return values such as `error` are ignored, so `NewEmail() (Email, error)` and `New() (*Repository, error)` count as constructors
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported
+5. **Multiple constructors**: When a type has several constructors, diagnostics mention `New<TypeName>` if it exists, otherwise `New`, otherwise the first one declared
 
 ## Limitations
 

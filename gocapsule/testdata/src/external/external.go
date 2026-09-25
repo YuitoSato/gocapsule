@@ -1,6 +1,10 @@
 package external
 
-import "target"
+import (
+	"newdefined"
+	"newerr"
+	"target"
+)
 
 func CreateUser() {
 	// Violation: direct struct literal creation
@@ -58,4 +62,39 @@ func TestPlainNewConstructor() {
 
 	// Violation: field reassignment
 	repo.Name = "modified" // want `direct field assignment to Repository.Name is not allowed; Repository has a constructor New\(\)`
+}
+
+func TestSuffixMismatch() {
+	// Violation: NewRouter() returns *Mux, so Mux is encapsulated even though the name differs
+	_ = &target.Mux{Prefix: "/"} // want `direct struct literal creation of Mux is not allowed; use target.NewRouter\(\) instead`
+
+	// OK: using constructor
+	m := target.NewRouter("/")
+
+	// Violation: field reassignment
+	m.Prefix = "/api" // want `direct field assignment to Mux.Prefix is not allowed; Mux has a constructor NewRouter\(\)`
+}
+
+func TestMultipleConstructors() {
+	// Violation: diagnostics name NewAccount, not NewAccountFromID
+	_ = &target.Account{ID: "1"} // want `direct struct literal creation of Account is not allowed; use target.NewAccount\(\) instead`
+}
+
+func TestPlainNewWithError() {
+	// Violation: direct struct literal creation
+	_ = &newerr.Store{Path: "/tmp"} // want `direct struct literal creation of Store is not allowed; use newerr.New\(\) instead`
+
+	// OK: using constructor that also returns an error
+	s, _ := newerr.New("/tmp")
+
+	// Violation: field reassignment
+	s.Path = "/var" // want `direct field assignment to Store.Path is not allowed; Store has a constructor New\(\)`
+}
+
+func TestPlainNewDefinedType() {
+	// Violation: direct type conversion
+	_ = newdefined.Token("abc") // want `direct type conversion to Token is not allowed; use newdefined.New\(\) instead`
+
+	// OK: using constructor
+	_ = newdefined.New("abc")
 }

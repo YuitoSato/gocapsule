@@ -77,3 +77,28 @@ type Repository struct { // want Repository:`&\{New\}`
 func New(name string) *Repository {
 	return &Repository{Name: name}
 }
+
+// Mux is constructed by NewRouter(); the constructor suffix does not need to match the type name
+type Mux struct { // want Mux:`&\{NewRouter\}`
+	Prefix string
+}
+
+// NewRouter creates a new Mux
+func NewRouter(prefix string) *Mux {
+	return &Mux{Prefix: prefix}
+}
+
+// Account has several constructors; NewAccount is the one shown in diagnostics
+type Account struct { // want Account:`&\{NewAccount\}`
+	ID string
+}
+
+// NewAccountFromID creates an Account from an ID
+func NewAccountFromID(id string) *Account {
+	return &Account{ID: id}
+}
+
+// NewAccount creates a new Account
+func NewAccount(id string) *Account {
+	return &Account{ID: id}
+}
