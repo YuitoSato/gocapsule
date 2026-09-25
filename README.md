@@ -33,6 +33,14 @@ Use the `-ignorePackages` flag to exclude specific packages from analysis. This 
 gocapsule -ignorePackages="net/http,database/sql" ./...
 ```
 
+gocapsule analyzes your dependencies as well, and `New()` is the idiomatic constructor name in many libraries. Types such as `container/list.List`, `container/ring.Ring`, `reflect.Value`, `log.Logger`, `text/template.Template`, `echo.Echo`, `gin.Engine`, and `logrus.Logger` are therefore encapsulated too. If gocapsule reports legitimate usage of such a type (for example `r.Value = 1` on a `ring.Ring`, or `e.Debug = true` on an `echo.Echo`), exclude that package:
+
+```bash
+gocapsule -ignorePackages="container/ring,github.com/labstack/echo/v4" ./...
+```
+
+Package paths must match exactly; prefixes and globs are not supported.
+
 ### With golangci-lint
 
 1. Create `.custom-gcl.yml`:
@@ -102,6 +110,33 @@ func main() {
 }
 ```
 
+A constructor named just `New` works the same way. This is convenient when the package is named after the type:
+
+```go
+// package repository
+type Repository struct {
+    Name string
+}
+
+func New(name string) *Repository {
+    return &Repository{Name: name}
+}
+```
+
+```go
+// package main
+import "repository"
+
+func main() {
+    // NG: direct struct literal creation
+    r := &repository.Repository{Name: "test"}
+    // -> "direct struct literal creation of Repository is not allowed; use repository.New() instead"
+
+    // OK: using constructor
+    r := repository.New("test")
+}
+```
+
 ### Defined Types
 
 Defined types with constructors are also protected:
@@ -132,7 +167,7 @@ func main() {
 
 ## Rules
 
-1. **Constructor pattern**: Functions named exactly `New`, or matching `New[A-Z]*` that return `*TypeName` or `TypeName`.
+1. **Constructor pattern**: Package-level functions named exactly `New`, or `New` followed by the type name (case-insensitive, e.g. `NewUser` for `User`, `NewHTTPClient` for `HTTPClient`), whose first return value is `*TypeName` or `TypeName` of a type declared in the same package. Additional return values such as `error` are ignored, so `NewEmail() (Email, error)` and `New() (*Repository, error)` count as constructors
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported
