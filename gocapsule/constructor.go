@@ -31,11 +31,9 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 			return
 		}
 
-		// Extract the type name from the constructor name
-		typeName := extractTypeName(funcName)
-		if typeName == "" {
-			return
-		}
+		// Extract the type name from the constructor name.
+		// Empty for a plain "New" constructor.
+		typeNameInFuncName := extractTypeName(funcName)
 
 		// Find the return type
 		returnType := getConstructorReturnType(pass, funcDecl)
@@ -49,8 +47,8 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 			return
 		}
 
-		// Verify the type name matches
-		if !strings.EqualFold(namedType.Obj().Name(), typeName) {
+		// Verify the type name matches (skipped for plain "New")
+		if typeNameInFuncName != "" && !strings.EqualFold(namedType.Obj().Name(), typeNameInFuncName) {
 			return
 		}
 
@@ -69,6 +67,9 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 
 // isConstructorName checks if a function name matches the New** pattern.
 func isConstructorName(name string) bool {
+	if name == "New" {
+		return true
+	}
 	if len(name) <= 3 {
 		return false
 	}
@@ -80,7 +81,7 @@ func isConstructorName(name string) bool {
 }
 
 // extractTypeName extracts the type name from a constructor name.
-// "NewUser" -> "User", "NewHTTPClient" -> "HTTPClient", "NewEmail" -> "Email"
+// "NewUser" -> "User", "NewHTTPClient" -> "HTTPClient", "New" -> ""
 func extractTypeName(constructorName string) string {
 	if len(constructorName) <= 3 {
 		return ""
