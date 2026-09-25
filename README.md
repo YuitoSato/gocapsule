@@ -4,7 +4,7 @@ A Go linter that enforces encapsulation by preventing direct struct creation, ty
 
 ## Features
 
-- **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals
+- **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals that set fields (an empty literal is the zero value and is allowed)
 - **Prevent direct type conversion**: For defined types (e.g., `type Email string`) with constructors, external packages cannot use direct type conversions
 - **Prevent field reassignment**: External packages cannot reassign public fields of structs that have constructors
 - **Embedded field support**: Detects violations through embedded field access (e.g., `container.User.Name = "x"`)
@@ -110,6 +110,18 @@ func main() {
 }
 ```
 
+An empty literal such as `user.User{}` or `&user.User{}` is the zero value of the type, exactly like `var u user.User` or `new(user.User)`, and is not reported. This keeps the common `(T, error)` pattern clean:
+
+```go
+func (r Repository) SaveUser(u user.User) (user.User, error) {
+    if err := r.db.Save(u); err != nil {
+        // OK: zero value placeholder; the error is the real result
+        return user.User{}, fmt.Errorf("save user: %w", err)
+    }
+    return u, nil
+}
+```
+
 A constructor named just `New` works the same way. This is convenient when the package is named after the type:
 
 ```go
@@ -171,10 +183,11 @@ func main() {
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported
+5. **Zero values are allowed**: An empty literal of a struct or array type (`user.User{}`, `&user.User{}`, `id.UserID{}` for `type UserID [16]byte`) is the zero value of the type, which is always obtainable via `var u user.User` or `new(user.User)`. Go offers no way to prevent zero values, so gocapsule does not report them. A literal that sets any field or element is still reported. Slice and map types are not covered: for `type Roles []string`, `Roles{}` is a non-nil value rather than the zero value, so it is reported
 
 ## Limitations
 
-gocapsule enforces constructor usage and blocks **field reassignment**, but does **not** detect content mutation of slices, maps, or pointers:
+gocapsule enforces constructor usage and blocks **field reassignment**, but does **not** detect content mutation of slices, maps, or pointers. Zero values are not reported either, since Go cannot prevent them (see rule 5):
 
 | Pattern | Detected? |
 |---------|-----------|
@@ -182,6 +195,7 @@ gocapsule enforces constructor usage and blocks **field reassignment**, but does
 | `u.Name = "modified"` | ✅ Yes |
 | `e := email.Email("invalid")` | ✅ Yes |
 | `cart.Order.Amount = 0` (embedded) | ✅ Yes |
+| `u := user.User{}` / `var u user.User` (zero value) | ❌ No (by design) |
 | `u.Roles[0] = "hacker"` (slice element) | ❌ No |
 | `c.Settings["key"] = "value"` (map value) | ❌ No |
 | `roles[0] = "x"` after `NewUser(roles)` | ❌ No |

@@ -50,6 +50,14 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		return
 	}
 
+	// An empty literal such as T{} or &T{} of a struct or array type is the
+	// zero value of T. The same value is obtainable via `var t T` or new(T),
+	// which are never reported, and it cannot carry any data, so it is not
+	// treated as a construction.
+	if isZeroValueLiteral(lit, namedType) {
+		return
+	}
+
 	// Skip if the struct is defined in the current package
 	if isLocalType(pass, namedType) {
 		return
@@ -73,6 +81,21 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		namedType.Obj().Pkg().Name(),
 		fact.ConstructorName,
 	)
+}
+
+// isZeroValueLiteral reports whether lit is an empty composite literal (T{} or
+// &T{}) of a struct or array type, i.e. the zero value of that type.
+// Slice and map types are excluded on purpose: for those, T{} is an empty but
+// non-nil value, which is not the zero value.
+func isZeroValueLiteral(lit *ast.CompositeLit, named *types.Named) bool {
+	if len(lit.Elts) != 0 {
+		return false
+	}
+	switch named.Underlying().(type) {
+	case *types.Struct, *types.Array:
+		return true
+	}
+	return false
 }
 
 // checkTypeConversion checks if a type conversion creates an encapsulated

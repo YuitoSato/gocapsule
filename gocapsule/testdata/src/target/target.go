@@ -77,3 +77,19 @@ type Repository struct { // want Repository:`&\{New\}`
 func New(name string) *Repository {
 	return &Repository{Name: name}
 }
+
+// Roles is a defined slice type with a constructor
+type Roles []string // want Roles:`&\{NewRoles\}`
+
+// NewRoles creates a new Roles
+func NewRoles(names ...string) Roles {
+	return Roles(names)
+}
+
+// UserID is a defined array type with a constructor (e.g. a UUID wrapper)
+type UserID [16]byte // want UserID:`&\{NewUserID\}`
+
+// NewUserID creates a new UserID
+func NewUserID(b [16]byte) UserID {
+	return UserID(b)
+}
