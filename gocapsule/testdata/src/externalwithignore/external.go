@@ -20,4 +20,12 @@ func TestIgnoredPackage() {
 
 	// Using constructor is always OK
 	_ = ignored.NewIgnoredType("test")
+
+	// Zero values - should be ignored
+	_ = ignored.IgnoredStruct{}
+	var z ignored.IgnoredStruct
+	_ = z
+	_ = new(ignored.IgnoredStruct)
+	var t ignored.IgnoredType
+	_ = t
 }

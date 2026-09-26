@@ -9,30 +9,34 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 )
 
-// detectViolations checks for struct literal creation and field assignment
-// violations from external packages.
+// detectViolations checks for struct literal creation, zero value creation,
+// type conversion, and field assignment violations from external packages.
 func detectViolations(pass *analysis.Pass, inspect *inspector.Inspector) {
 	nodeFilter := []ast.Node{
 		(*ast.CompositeLit)(nil),
 		(*ast.AssignStmt)(nil),
 		(*ast.CallExpr)(nil),
+		(*ast.ValueSpec)(nil),
 	}
 
-	inspect.Preorder(nodeFilter, func(n ast.Node) {
-		switch node := n.(type) {
+	for cur := range inspect.Root().Preorder(nodeFilter...) {
+		switch node := cur.Node().(type) {
 		case *ast.CompositeLit:
-			checkCompositeLit(pass, node)
+			checkCompositeLit(pass, cur, node)
 		case *ast.AssignStmt:
 			checkAssignment(pass, node)
 		case *ast.CallExpr:
 			checkTypeConversion(pass, node)
+			checkNewCall(pass, cur, node)
+		case *ast.ValueSpec:
+			checkVarDecl(pass, cur, node)
 		}
-	})
+	}
 }
 
 // checkCompositeLit checks if a composite literal creates an encapsulated struct
 // from an external package.
-func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
+func checkCompositeLit(pass *analysis.Pass, cur inspector.Cursor, lit *ast.CompositeLit) {
 	// Get the type of the composite literal
 	tv, ok := pass.TypesInfo.Types[lit]
 	if !ok {
@@ -50,28 +54,21 @@ func checkCompositeLit(pass *analysis.Pass, lit *ast.CompositeLit) {
 		return
 	}
 
-	// Skip if the struct is defined in the current package
-	if isLocalType(pass, namedType) {
+	fact, ok := lookupEncapsulatedType(pass, namedType)
+	if !ok {
 		return
 	}
 
-	// Skip ignored packages
-	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
+	// An empty literal (T{} or &T{}) is a zero value
+	if len(lit.Elts) == 0 && (isZeroValueAllowed(namedType) || isReturnedWithNonNilError(pass, cur)) {
 		return
-	}
-
-	// Check if the struct has an EncapsulatedType fact
-	var fact EncapsulatedType
-	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
-		return // No constructor exists for this struct
 	}
 
 	// Report violation
 	pass.Reportf(lit.Pos(),
-		"direct struct literal creation of %s is not allowed; use %s.%s() instead",
+		"direct struct literal creation of %s is not allowed; use %s instead",
 		namedType.Obj().Name(),
-		namedType.Obj().Pkg().Name(),
-		fact.ConstructorName,
+		constructorCall(namedType, fact),
 	)
 }
 
@@ -103,28 +100,16 @@ func checkTypeConversion(pass *analysis.Pass, call *ast.CallExpr) {
 		return
 	}
 
-	// Skip if the type is defined in the current package
-	if isLocalType(pass, namedType) {
+	fact, ok := lookupEncapsulatedType(pass, namedType)
+	if !ok {
 		return
-	}
-
-	// Skip ignored packages
-	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
-		return
-	}
-
-	// Check if the type has an EncapsulatedType fact
-	var fact EncapsulatedType
-	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
-		return // No constructor exists for this type
 	}
 
 	// Report violation
 	pass.Reportf(call.Pos(),
-		"direct type conversion to %s is not allowed; use %s.%s() instead",
+		"direct type conversion to %s is not allowed; use %s instead",
 		namedType.Obj().Name(),
-		namedType.Obj().Pkg().Name(),
-		fact.ConstructorName,
+		constructorCall(namedType, fact),
 	)
 }
 
@@ -166,19 +151,8 @@ func checkFieldAssignment(pass *analysis.Pass, expr ast.Expr) {
 		return
 	}
 
-	// Skip if the struct is defined in the current package
-	if isLocalType(pass, namedType) {
-		return
-	}
-
-	// Skip ignored packages
-	if namedType.Obj().Pkg() != nil && shouldIgnorePackage(namedType.Obj().Pkg().Path()) {
-		return
-	}
-
-	// Check if the struct has an EncapsulatedType fact
-	var fact EncapsulatedType
-	if !pass.ImportObjectFact(namedType.Obj(), &fact) {
+	fact, ok := lookupEncapsulatedType(pass, namedType)
+	if !ok {
 		return
 	}
 
@@ -206,10 +180,8 @@ func findEncapsulatedType(pass *analysis.Pass, recvType types.Type, selection *t
 
 	// The last index is the actual field, so we iterate up to len-1
 	for i := 0; i < len(selection.Index())-1; i++ {
-		currentType = dereferencePointer(currentType)
-
-		named, ok := currentType.(*types.Named)
-		if !ok {
+		named := extractNamedType(currentType)
+		if named == nil {
 			return nil
 		}
 
@@ -229,10 +201,8 @@ func findEncapsulatedType(pass *analysis.Pass, recvType types.Type, selection *t
 
 // extractNamedStructTypeFromReceiver extracts the named type from a receiver type.
 func extractNamedStructTypeFromReceiver(typ types.Type) *types.Named {
-	typ = dereferencePointer(typ)
-
-	named, ok := typ.(*types.Named)
-	if !ok {
+	named := extractNamedType(typ)
+	if named == nil {
 		return nil
 	}
 
@@ -243,12 +213,45 @@ func extractNamedStructTypeFromReceiver(typ types.Type) *types.Named {
 	return named
 }
 
-// dereferencePointer removes pointer indirection from a type.
+// dereferencePointer removes pointer indirection from a type, looking
+// through type aliases.
 func dereferencePointer(typ types.Type) types.Type {
-	if ptr, ok := typ.(*types.Pointer); ok {
+	if ptr, ok := types.Unalias(typ).(*types.Pointer); ok {
 		return ptr.Elem()
 	}
 	return typ
+}
+
+// namedOf returns the named type of typ, looking through type aliases, or nil
+// if typ is not a named type.
+func namedOf(typ types.Type) *types.Named {
+	named, _ := types.Unalias(typ).(*types.Named)
+	return named
+}
+
+// lookupEncapsulatedType returns the EncapsulatedType fact of a named type
+// that must be protected in the current package. It returns false for types
+// defined in the current package, types in ignored packages, and types
+// without a New** constructor.
+func lookupEncapsulatedType(pass *analysis.Pass, named *types.Named) (EncapsulatedType, bool) {
+	var fact EncapsulatedType
+
+	// Skip if the type is defined in the current package
+	if isLocalType(pass, named) {
+		return fact, false
+	}
+
+	// Skip ignored packages
+	if named.Obj().Pkg() != nil && ignorePackages[named.Obj().Pkg().Path()] {
+		return fact, false
+	}
+
+	// Check if the type has an EncapsulatedType fact
+	if !pass.ImportObjectFact(named.Obj(), &fact) {
+		return fact, false // No constructor exists for this type
+	}
+
+	return fact, true
 }
 
 // isLocalType checks if a type is defined in the current package.
@@ -265,15 +268,8 @@ func isLocalType(pass *analysis.Pass, named *types.Named) bool {
 	return currentPath == typePath
 }
 
-// shouldIgnorePackage checks if a package path is in the ignore list.
-func shouldIgnorePackage(pkgPath string) bool {
-	if ignorePackages == "" {
-		return false
-	}
-	for _, ignored := range strings.Split(ignorePackages, ",") {
-		if strings.TrimSpace(ignored) == pkgPath {
-			return true
-		}
-	}
-	return false
+// constructorCall returns the call of the constructor of a named type, e.g.
+// "users.NewUser()".
+func constructorCall(named *types.Named, fact EncapsulatedType) string {
+	return named.Obj().Pkg().Name() + "." + fact.ConstructorName + "()"
 }

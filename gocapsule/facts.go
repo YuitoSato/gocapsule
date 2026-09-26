@@ -9,3 +9,13 @@ type EncapsulatedType struct {
 
 // AFact implements the analysis.Fact interface.
 func (*EncapsulatedType) AFact() {}
+
+// NonNilError is a Fact indicating that a package-level variable is
+// initialized with a non-nil value and never modified in its package, such
+// as a sentinel error `var ErrNotFound = errors.New("not found")`.
+type NonNilError struct{}
+
+// AFact implements the analysis.Fact interface.
+func (*NonNilError) AFact() {}
+
+func (*NonNilError) String() string { return "nonNilError" }

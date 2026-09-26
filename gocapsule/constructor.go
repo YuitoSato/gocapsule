@@ -116,18 +116,8 @@ func getConstructorReturnType(pass *analysis.Pass, funcDecl *ast.FuncDecl) types
 }
 
 // extractNamedType extracts the named type from a type.
-// Handles both *T and T where T is a named type (struct or defined type).
+// Handles both *T and T where T is a named type (struct or defined type),
+// including through type aliases.
 func extractNamedType(typ types.Type) *types.Named {
-	// Dereference pointer if necessary
-	if ptr, ok := typ.(*types.Pointer); ok {
-		typ = ptr.Elem()
-	}
-
-	// Get the named type
-	named, ok := typ.(*types.Named)
-	if !ok {
-		return nil
-	}
-
-	return named
+	return namedOf(dereferencePointer(typ))
 }
