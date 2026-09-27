@@ -261,23 +261,30 @@ func main() {
 1. **Constructor pattern**: Package-level functions named exactly `New`, or `New` followed by the type name (case-insensitive, e.g. `NewUser` for `User`, `NewHTTPClient` for `HTTPClient`), whose first return value is `*TypeName` or `TypeName` of a type declared in the same package. Additional return values such as `error` are ignored, so `NewEmail() (Email, error)` and `New() (*Repository, error)` count as constructors
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
-4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported. Interfaces are not (v1.0.0+): a constructor returning an interface, e.g. `NewRepository() Repository`, does not restrict `Repository`, since an interface has nothing to encapsulate
+4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported. Interfaces are not (v1.0.0+): a constructor returning an interface, e.g. `NewStore() Store`, does not restrict `Store`, since an interface has nothing to encapsulate
 5. **Zero values** (v1.0.0+): `T{}`, `&T{}`, `var v T` (without an initializer), and `new(T)` are reported unless `-allowZero` is set. Type aliases of `T` are treated as `T`. Only `T` itself is checked: `var p *T` and `new(*T)` are allowed. A struct literal with any field, even `T{Name: ""}`, is a regular struct literal and is always reported
-6. **Zero values returned with an error** (v1.0.0+): `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement together with an error result that is guaranteed to be non-nil. An error is guaranteed to be non-nil when it is one of the following non-nil expressions:
-   - `errors.New(...)` or `fmt.Errorf(...)`
-   - `&x` or `new(E)`
-   - a value of a concrete (non-interface) type returned as an interface, e.g. `&MyError{}`. As in Go itself, a nil `*MyError` stored in an `error` is non-nil
-   - a package-level variable (e.g. a sentinel error such as `ErrNotFound` or `io.EOF`) that is initialized with a non-nil expression, is never assigned anything other than a single non-nil expression, and never has its address taken in its own package
+6. **Zero values returned with an error** (v1.0.0+): `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement together with an error result that is guaranteed to be non-nil.
 
-   A local variable is also guaranteed to be non-nil after a nil check, as long as nothing other than a single non-nil expression is assigned to it between the check and the `return`:
+   The following are **non-nil expressions**:
+   - `errors.New(...)` or `fmt.Errorf(...)`
+   - `&x` or `new(E)`, e.g. `&MyError{}`
+   - a value of a concrete (non-interface) type returned as an interface, e.g. `NewAppError(...)` returning `*AppError`. As in Go itself, a nil `*AppError` stored in an `error` is non-nil. A function returning `error`, such as your own helper or `github.com/pkg/errors.New`, is not trusted
+   - a package-level variable (e.g. a sentinel error such as `ErrNotFound` or `io.EOF`) that is initialized with a non-nil expression, and in its own package is only assigned by non-nil assignments and never has its address taken
+
+   A **non-nil assignment** is a single assignment of a non-nil expression, e.g. `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or `var err error = &MyError{}`. A multiple assignment such as `n, err = 0, errors.New("...")` is not.
+
+   A local variable `err` is also guaranteed to be non-nil at the `return`:
    - in the body of `if err != nil`, `if nil != err`, or `if ... && err != nil`
    - in the `else` of `if err == nil`
    - after `if err == nil { ... }` (or `if ... || err == nil`) in the same block, when the `if` body ends with `return`, `panic`, `break`, or `continue`. A labeled statement between the check and the `return` disables this, since a `goto` could skip the check
-   - after an assignment of a non-nil expression in the same block, e.g. `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or `var err error = &MyError{}`. Only single assignments are supported
+   - after a non-nil assignment in the same block
 
-   `errors.As(err, ...)` and `errors.Is(err, target)`, where `target` is a non-nil expression, can be used in place of `err != nil`, since both are false when `err` is nil. The variable must be an interface or a pointer, must not have its address taken, and must not be assigned anything other than a single non-nil expression by a function literal nested in the function that declares it.
+   `errors.As(err, ...)` and `errors.Is(err, target)`, where `target` is a non-nil expression, can be used in place of `err != nil`, since both are false when `err` is nil. In all of these cases:
+   - `err` must be an interface or a pointer
+   - `err` must only be assigned by non-nil assignments between the check and the `return`
+   - `err` must never have its address taken, and function literals nested in the function that declares `err` must only assign it by non-nil assignments
 
-   A named error result must meet the same conditions on its address and function literals, whatever is returned, since a deferred call can overwrite it after the `return`, e.g. `defer func() { err = nil }()`
+   If the error result is named, e.g. `func f() (u user.User, err error)`, the last condition also applies to the named result `err`, even when the `return` statement returns `errors.New(...)`, because a deferred call can overwrite a named result after the `return`, e.g. `defer func() { err = nil }()`
 
 ## Migrating from v0.x
 
@@ -294,8 +301,8 @@ To keep the v0.x behavior for `var` and `new`, set `-allowZero` (or `allowZero: 
 v1.0.0 also changes the following:
 
 - Violations through type aliases, e.g. `type U = users.User; _ = &U{}`, are reported. v0.x did not detect them
-- golangci-lint `settings` (`ignorePackages` and `allowZero`) are applied. v0.x ignored them
-- Interfaces returned by a constructor are no longer restricted, e.g. `repository.Repository(impl)` is not reported
+- golangci-lint `settings` (`ignorePackages` and `allowZero`) are applied. v0.x ignored them. Settings are decoded strictly: an unknown key or a value of the wrong type, e.g. `ignorePackages: "net/http"` instead of a list, fails at startup
+- Interfaces returned by a constructor are no longer restricted, e.g. `store.Store(impl)` is not reported when `store.NewStore()` returns the interface `Store`
 
 ## Limitations
 
@@ -332,11 +339,12 @@ The following are **reported** even though the zero value is safe, because provi
 | `var u user.User` followed by an assignment before use | Declare at the first assignment |
 | `var req Request; json.Unmarshal(b, &req)` | Use `-allowZero` |
 | `var ErrX = newError("x")` returned as `return user.User{}, ErrX` (sentinel initialized by a function other than `errors.New` or `fmt.Errorf`, including `os.ErrNotExist` and `github.com/pkg/errors.New`) | `var ErrX = errors.New("x")`, or return a pointer: `return nil, ErrX` |
+| `return user.User{}, newError("x")` where `newError` always returns a non-nil error but its result type is `error` (including `github.com/pkg/errors.New`) | Return a concrete type from your helper, e.g. `func newError(msg string) *MyError`, or return a pointer: `return nil, newError("x")` |
 | `switch { case err != nil: return user.User{}, err }` | `if err != nil { ... }` |
 | `if err != nil { ... }` in a loop, followed by `return user.User{}, err` after the loop | `if err != nil { return user.User{}, err }` in the loop |
 | `return []user.User{{}}, err` (zero value nested in another literal) | Return `nil` |
 | `if cond { err = f() } else { return user.User{}, err }` after an early exit (branches are not distinguished, so a possibly nil value assigned in another branch counts) | `if err != nil { return user.User{}, err }` in the branch |
-| A deferred function that may set the named error result to nil, e.g. `defer func() { if cerr := f.Close(); cerr != nil && err == nil { err = cerr } }()` (guards are not used in deferred functions) or `err = errors.Join(err, f.Close())`. This applies to every `return` in the function, including ones before the `defer` | Assign a non-nil expression: `err = fmt.Errorf("close: %w", cerr)`, or return a pointer: `return nil, err` |
+| A deferred function that may set the named error result to nil, e.g. `defer func() { if cerr := f.Close(); cerr != nil && err == nil { err = cerr } }()` (a variable on the right-hand side is not treated as non-nil, even after a nil check) or `err = errors.Join(err, f.Close())`. This applies to every `return` in the function, including ones before the `defer` | Assign a non-nil expression: `err = fmt.Errorf("close: %w", cerr)`, or return a pointer: `return nil, err` |
 
 ## License
 
