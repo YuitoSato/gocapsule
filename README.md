@@ -5,7 +5,7 @@ A Go linter that enforces encapsulation by preventing direct struct creation, ze
 ## Features
 
 - **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals
-- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors, except when returned together with a non-nil error. Use `-allowZero` or `-allowZeroPackages` to allow them
+- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors, except when returned together with a non-nil error. Use `-allowZero` to allow them
 - **Prevent direct type conversion**: For defined types (e.g., `type Email string`) with constructors, external packages cannot use direct type conversions
 - **Prevent field reassignment**: External packages cannot reassign public fields of structs that have constructors
 - **Embedded field support**: Detects violations through embedded field access (e.g., `container.User.Name = "x"`)
@@ -59,15 +59,11 @@ gocapsule -allowZero ./...
 | `&users.User{Name: ""}` | ❌ Reported | ❌ Reported |
 | `email.Email("")` | ❌ Reported | ❌ Reported |
 
-#### Allow Zero Values of Specific Packages (v1.0.0+)
-
-Standard library types whose zero value is ready to use, such as `bytes.Buffer` (`var buf bytes.Buffer`), `math/big.Int` (`new(big.Int)`), and `reflect.Value`, have constructors and are therefore reported by default too. Use the `-allowZeroPackages` flag to allow zero values of types in those packages only; unlike `-ignorePackages`, struct literals with fields, type conversions, and field assignments are still reported:
+Standard library types whose zero value is ready to use, such as `bytes.Buffer` (`var buf bytes.Buffer`), `math/big.Int` (`new(big.Int)`), and `reflect.Value`, have constructors and are therefore reported by default too. To allow them while keeping zero values of your own types reported, ignore those packages instead of using `-allowZero`. These types have no exported fields, so ignoring their packages loses no other checks:
 
 ```bash
-gocapsule -allowZeroPackages="bytes,math/big,reflect" ./...
+gocapsule -ignorePackages="bytes,math/big,reflect" ./...
 ```
-
-Package paths must match exactly, as with `-ignorePackages`.
 
 ### With golangci-lint
 
@@ -95,10 +91,6 @@ linters:
         settings:
           # Optional: allow zero values (default: false)
           allowZero: false
-          # Optional: package paths whose types are allowed to be created as zero values
-          allowZeroPackages:
-            - bytes
-            - math/big
           # Optional: package paths to ignore
           ignorePackages:
             - net/http
@@ -270,7 +262,7 @@ func main() {
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported
-5. **Zero values** (v1.0.0+): `T{}`, `&T{}`, `var v T` (without an initializer), and `new(T)` are reported unless `-allowZero` is set or `T` is in a package listed in `-allowZeroPackages`. Type aliases of `T` are treated as `T`. Only `T` itself is checked: `var p *T` and `new(*T)` are allowed. A struct literal with any field, even `T{Name: ""}`, is a regular struct literal and is always reported
+5. **Zero values** (v1.0.0+): `T{}`, `&T{}`, `var v T` (without an initializer), and `new(T)` are reported unless `-allowZero` is set. Type aliases of `T` are treated as `T`. Only `T` itself is checked: `var p *T` and `new(*T)` are allowed. A struct literal with any field, even `T{Name: ""}`, is a regular struct literal and is always reported
 6. **Zero values returned with an error** (v1.0.0+): `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement together with an error result that is guaranteed to be non-nil. An error is guaranteed to be non-nil when it is:
    - `errors.New(...)` or `fmt.Errorf(...)`
    - `&x` or `new(E)`
@@ -294,12 +286,12 @@ v1.0.0 reports zero values of types with constructors by default:
 | `var u users.User` | Allowed | Reported |
 | `new(users.User)` | Allowed | Reported |
 
-To keep the v0.x behavior for `var` and `new`, set `-allowZero` (or `allowZero: true` in golangci-lint). Note that `-allowZero` also allows `users.User{}` and `&users.User{}`. To allow zero values only for specific packages, such as `bytes` and `math/big`, use `-allowZeroPackages` instead.
+To keep the v0.x behavior for `var` and `new`, set `-allowZero` (or `allowZero: true` in golangci-lint). Note that `-allowZero` also allows `users.User{}` and `&users.User{}`. To allow zero values only for standard library types such as `bytes.Buffer` and `big.Int`, ignore their packages with `-ignorePackages` instead.
 
 v1.0.0 also changes the following:
 
 - Violations through type aliases, e.g. `type U = users.User; _ = &U{}`, are reported. v0.x did not detect them
-- golangci-lint `settings` (`ignorePackages`, `allowZero`, and `allowZeroPackages`) are applied. v0.x ignored them
+- golangci-lint `settings` (`ignorePackages` and `allowZero`) are applied. v0.x ignored them
 
 ## Limitations
 

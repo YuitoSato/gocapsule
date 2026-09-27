@@ -60,7 +60,7 @@ func checkCompositeLit(pass *analysis.Pass, cur inspector.Cursor, lit *ast.Compo
 	}
 
 	// An empty literal (T{} or &T{}) is a zero value
-	if len(lit.Elts) == 0 && (isZeroValueAllowed(namedType) || isReturnedWithNonNilError(pass, cur)) {
+	if len(lit.Elts) == 0 && (allowZero || isReturnedWithNonNilError(pass, cur)) {
 		return
 	}
 

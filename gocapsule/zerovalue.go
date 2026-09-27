@@ -3,7 +3,6 @@ package gocapsule
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ast/inspector"
@@ -12,7 +11,7 @@ import (
 // checkVarDecl checks if a var declaration without an initializer creates a
 // zero value of an encapsulated type from an external package.
 func checkVarDecl(pass *analysis.Pass, cur inspector.Cursor, spec *ast.ValueSpec) {
-	if spec.Type == nil || len(spec.Values) > 0 {
+	if allowZero || spec.Type == nil || len(spec.Values) > 0 {
 		return
 	}
 
@@ -27,7 +26,7 @@ func checkVarDecl(pass *analysis.Pass, cur inspector.Cursor, spec *ast.ValueSpec
 	}
 
 	fact, ok := lookupEncapsulatedType(pass, namedType)
-	if !ok || isZeroValueAllowed(namedType) {
+	if !ok {
 		return
 	}
 
@@ -44,7 +43,7 @@ func checkVarDecl(pass *analysis.Pass, cur inspector.Cursor, spec *ast.ValueSpec
 // checkNewCall checks if new(T) creates a zero value of an encapsulated type
 // from an external package.
 func checkNewCall(pass *analysis.Pass, cur inspector.Cursor, call *ast.CallExpr) {
-	if len(call.Args) != 1 || !isBuiltinCall(pass, call, "new") {
+	if allowZero || len(call.Args) != 1 || !isBuiltinCall(pass, call, "new") {
 		return
 	}
 
@@ -61,7 +60,7 @@ func checkNewCall(pass *analysis.Pass, cur inspector.Cursor, call *ast.CallExpr)
 	}
 
 	fact, ok := lookupEncapsulatedType(pass, namedType)
-	if !ok || isZeroValueAllowed(namedType) || isReturnedWithNonNilError(pass, cur) {
+	if !ok || isReturnedWithNonNilError(pass, cur) {
 		return
 	}
 
@@ -71,10 +70,4 @@ func checkNewCall(pass *analysis.Pass, cur inspector.Cursor, call *ast.CallExpr)
 		namedType.Obj().Name(),
 		constructorCall(namedType, fact),
 	)
-}
-
-// isZeroValueAllowed checks if zero values of a type are allowed by the
-// allowZero or allowZeroPackages settings.
-func isZeroValueAllowed(named *types.Named) bool {
-	return allowZero || allowZeroPackages[named.Obj().Pkg().Path()]
 }

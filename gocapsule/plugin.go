@@ -15,9 +15,6 @@ type Settings struct {
 	IgnorePackages []string `json:"ignorePackages"`
 	// AllowZero allows zero values of encapsulated types.
 	AllowZero bool `json:"allowZero"`
-	// AllowZeroPackages is a list of package paths whose types are allowed
-	// to be created as zero values.
-	AllowZeroPackages []string `json:"allowZeroPackages"`
 }
 
 // New creates a new gocapsule plugin instance for golangci-lint.
@@ -29,7 +26,6 @@ func New(settings any) (register.LinterPlugin, error) {
 
 	ignorePackages = newPackageSet(s.IgnorePackages)
 	allowZero = s.AllowZero
-	allowZeroPackages = newPackageSet(s.AllowZeroPackages)
 
 	return &plugin{}, nil
 }

@@ -17,10 +17,6 @@ var ignorePackages packageSet
 // types (T{}, &T{}, var v T, new(T)).
 var allowZero bool
 
-// allowZeroPackages is the set of package paths whose types are allowed to be
-// created as zero values.
-var allowZeroPackages packageSet
-
 // Analyzer is the gocapsule analyzer that enforces encapsulation.
 var Analyzer = &analysis.Analyzer{
 	Name:      "gocapsule",
@@ -35,8 +31,6 @@ func init() {
 		"comma-separated `list` of package paths to ignore (e.g., net/http,database/sql)")
 	Analyzer.Flags.BoolVar(&allowZero, "allowZero", false,
 		"allow zero values of encapsulated types (T{}, &T{}, var v T, new(T))")
-	Analyzer.Flags.Var(&allowZeroPackages, "allowZeroPackages",
-		"comma-separated `list` of package paths whose types are allowed to be created as zero values (e.g., bytes,math/big)")
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
