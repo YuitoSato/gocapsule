@@ -20,8 +20,8 @@ var (
 )
 
 // exportNonNilErrorFacts exports facts for package-level error variables that
-// are initialized with a non-nil value and never modified in the package,
-// such as `var ErrNotFound = errors.New("not found")`.
+// are initialized with a non-nil value and never set to a possibly nil value
+// in the package, such as `var ErrNotFound = errors.New("not found")`.
 func exportNonNilErrorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 	// Initializers are in dependency order, so `var ErrB = ErrA` sees the fact of ErrA
 	var candidates []*types.Initializer
@@ -34,31 +34,32 @@ func exportNonNilErrorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 		return
 	}
 
-	modified := modifiedPackageVars(pass, inspect)
+	nilable := nilablePackageVars(pass, inspect)
 	for _, init := range candidates {
 		v := init.Lhs[0]
-		if !modified[v] && isNonNilExpr(pass, init.Rhs, v.Type()) {
+		if !nilable[v] && isNonNilExpr(pass, init.Rhs, v.Type()) {
 			pass.ExportObjectFact(v, new(NonNilError))
 		}
 	}
 }
 
-// modifiedPackageVars returns the package-level variables that are written
-// anywhere in the current package.
-func modifiedPackageVars(pass *analysis.Pass, inspect *inspector.Inspector) map[*types.Var]bool {
-	modified := make(map[*types.Var]bool)
+// nilablePackageVars returns the package-level variables that may be set to
+// nil anywhere in the current package.
+func nilablePackageVars(pass *analysis.Pass, inspect *inspector.Inspector) map[*types.Var]bool {
+	nilable := make(map[*types.Var]bool)
 	for cur := range inspect.Root().Preorder(writeNodes...) {
 		for _, expr := range writtenExprs(cur.Node()) {
 			ident, ok := ast.Unparen(expr).(*ast.Ident)
 			if !ok {
 				continue
 			}
-			if v, ok := pass.TypesInfo.Uses[ident].(*types.Var); ok && v.Parent() == pass.Pkg.Scope() {
-				modified[v] = true
+			v, ok := pass.TypesInfo.Uses[ident].(*types.Var)
+			if ok && v.Parent() == pass.Pkg.Scope() && !assignsNonNil(pass, cur.Node(), v) {
+				nilable[v] = true
 			}
 		}
 	}
-	return modified
+	return nilable
 }
 
 // isReturnedWithNonNilError checks if the zero value expression at cur is
@@ -87,11 +88,16 @@ func isReturnedWithNonNilError(pass *analysis.Pass, cur inspector.Cursor) bool {
 		if i == zeroIndex {
 			continue
 		}
-		resultType := sig.Results().At(i).Type()
-		if !implementsError(resultType) {
+		result := sig.Results().At(i)
+		if !implementsError(result.Type()) {
 			continue
 		}
-		if isNonNilOperand(pass, retCur.ChildAt(edge.ReturnStmt_Results, i), resultType) {
+		// A deferred call may set a named result to nil after the return,
+		// e.g. `defer func() { err = nil }()`
+		if result.Name() != "" && mayWriteNilIndirectly(pass, retCur, result) {
+			continue
+		}
+		if isNonNilOperand(pass, retCur.ChildAt(edge.ReturnStmt_Results, i), result.Type()) {
 			return true
 		}
 	}
@@ -210,11 +216,12 @@ func isGuardedNonNil(pass *analysis.Pass, cur inspector.Cursor, ident *ast.Ident
 		return false
 	}
 
-	return hasNilCheck(pass, cur, obj) && !isModifiableIndirectly(pass, cur, obj)
+	return hasNilCheck(pass, cur, obj) && !mayWriteNilIndirectly(pass, cur, obj)
 }
 
 // hasNilCheck walks up from cur to the innermost function, looking for a nil
-// check that guarantees obj != nil at cur, with no write to obj in between.
+// check that guarantees obj != nil at cur, with no write of a possibly nil
+// value to obj in between.
 // The supported nil checks are:
 //
 //	if err != nil { <cur> }             // or the else of `if err == nil`
@@ -226,7 +233,7 @@ func isGuardedNonNil(pass *analysis.Pass, cur inspector.Cursor, ident *ast.Ident
 func hasNilCheck(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bool {
 	for c := cur; ; c = c.Parent() {
 		// c contains cur, so a write in c may run after the nil check
-		if isWrittenIn(pass, c.Node(), obj) {
+		if mayWriteNilIn(pass, c.Node(), obj) {
 			return false
 		}
 
@@ -262,8 +269,8 @@ func stmtList(n ast.Node, kind edge.Kind) []ast.Stmt {
 }
 
 // hasPrecedingNilCheck checks if a statement before stmts[index], which
-// contains cur, guarantees obj != nil with no write to obj after it: an if
-// statement that exits early unless obj != nil, e.g.
+// contains cur, guarantees obj != nil with no write of a possibly nil value
+// to obj after it: an if statement that exits early unless obj != nil, e.g.
 // `if err == nil { return u, nil }`, or an assignment of a non-nil value.
 func hasPrecedingNilCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj types.Object) bool {
 	// A goto may jump to a labeled statement, skipping the nil check
@@ -275,7 +282,7 @@ func hasPrecedingNilCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj 
 		switch s := stmt.(type) {
 		case *ast.IfStmt:
 			if exitsEarly(pass, s.Body) && impliesNonNil(pass, s.Cond, obj, false) {
-				return s.Else == nil || !isWrittenIn(pass, s.Else, obj)
+				return s.Else == nil || !mayWriteNilIn(pass, s.Else, obj)
 			}
 		case *ast.LabeledStmt:
 			return false
@@ -283,19 +290,19 @@ func hasPrecedingNilCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj 
 		if assignsNonNil(pass, stmt, obj) {
 			return true
 		}
-		if isWrittenIn(pass, stmt, obj) {
+		if mayWriteNilIn(pass, stmt, obj) {
 			return false
 		}
 	}
 	return false
 }
 
-// assignsNonNil checks if stmt assigns a non-nil value to obj, e.g.
+// assignsNonNil checks if n assigns a non-nil value to obj, e.g.
 // `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or
 // `var err error = &MyError{}`.
-func assignsNonNil(pass *analysis.Pass, stmt ast.Stmt, obj types.Object) bool {
+func assignsNonNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
 	var lhs, rhs []ast.Expr
-	switch s := stmt.(type) {
+	switch s := n.(type) {
 	case *ast.AssignStmt:
 		if s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
 			return false
@@ -389,10 +396,11 @@ func isNilComparison(pass *analysis.Pass, e *ast.BinaryExpr, obj types.Object) b
 		(isNil(pass, e.X) && refersTo(pass, e.Y, obj))
 }
 
-// isModifiableIndirectly checks if obj can be written other than by a direct
-// assignment in its own function: its address is taken, or a function
-// literal writes to it.
-func isModifiableIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bool {
+// mayWriteNilIndirectly checks if obj may be set to nil other than by a
+// direct assignment in the function that declares it: its address is taken,
+// or a function literal nested in that function writes a possibly nil value
+// to it.
+func mayWriteNilIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bool {
 	// Local variables can only be captured within their top-level declaration
 	var decl inspector.Cursor
 	for c := range cur.Enclosing() {
@@ -403,22 +411,22 @@ func isModifiableIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types
 	}
 
 	for c := range decl.Preorder(writeNodes...) {
-		for _, expr := range writtenExprs(c.Node()) {
-			if !refersTo(pass, expr, obj) {
-				continue
-			}
-			if _, isAddr := c.Node().(*ast.UnaryExpr); isAddr || isInFuncLit(c) {
-				return true
-			}
+		if !mayWriteNil(pass, c.Node(), obj) {
+			continue
+		}
+		if _, isAddr := c.Node().(*ast.UnaryExpr); isAddr || isInNestedFunc(c, obj) {
+			return true
 		}
 	}
 	return false
 }
 
-// isInFuncLit checks if cur is inside a function literal.
-func isInFuncLit(cur inspector.Cursor) bool {
-	for range cur.Enclosing((*ast.FuncLit)(nil)) {
-		return true
+// isInNestedFunc checks if cur is inside a function literal nested in the
+// function that declares obj, which may run at any time after it is created.
+func isInNestedFunc(cur inspector.Cursor, obj types.Object) bool {
+	for c := range cur.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
+		fn := c.Node()
+		return obj.Pos() < fn.Pos() || obj.Pos() >= fn.End()
 	}
 	return false
 }
@@ -449,13 +457,23 @@ func writtenExprs(n ast.Node) []ast.Expr {
 	return nil
 }
 
-// isWrittenIn checks if obj is written anywhere within node.
-func isWrittenIn(pass *analysis.Pass, node ast.Node, obj types.Object) bool {
+// mayWriteNilIn checks if obj may be set to nil anywhere within node.
+func mayWriteNilIn(pass *analysis.Pass, node ast.Node, obj types.Object) bool {
 	for n := range ast.Preorder(node) {
-		for _, expr := range writtenExprs(n) {
-			if refersTo(pass, expr, obj) {
-				return true
-			}
+		if mayWriteNil(pass, n, obj) {
+			return true
+		}
+	}
+	return false
+}
+
+// mayWriteNil checks if n writes to obj, other than by a single assignment of
+// a non-nil value such as `err = fmt.Errorf("...: %w", err)`, which cannot
+// make obj nil.
+func mayWriteNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
+	for _, expr := range writtenExprs(n) {
+		if refersTo(pass, expr, obj) {
+			return !assignsNonNil(pass, n, obj)
 		}
 	}
 	return false

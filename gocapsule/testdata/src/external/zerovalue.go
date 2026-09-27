@@ -56,7 +56,17 @@ func TestZeroValue() {
 	_ = cfg
 	_ = new(target.Config)
 	_ = target.Config{}
+
+	// OK: interfaces are not encapsulated, even if a constructor returns them
+	var store target.Store
+	_ = store
+	_ = new(target.Store)
+	_ = target.Store(fakeStore{})
 }
+
+type fakeStore struct{}
+
+func (fakeStore) Get(string) string { return "" }
 
 type myError struct{}
 
@@ -182,6 +192,35 @@ func ReturnZeroInFuncLit() {
 	}
 }
 
+// OK: err is declared in the function literal, so assignments in it are not
+// indirect
+func ReturnZeroInFuncLitWithReassignedError() {
+	_ = func() (*target.User, error) {
+		_, err := findUser()
+		if err != nil {
+			return &target.User{}, err
+		}
+		_, err = findUser()
+		if err != nil {
+			return &target.User{}, err
+		}
+		return nil, nil
+	}
+}
+
+// Violation: a function literal nested in the function literal assigns err
+func ReturnZeroInFuncLitWithErrorAssignedInNestedFuncLit() {
+	_ = func() (*target.User, error) {
+		_, err := findUser()
+		reset := func() { err = nil }
+		if err != nil {
+			reset()
+			return &target.User{}, err // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		}
+		return nil, nil
+	}
+}
+
 // Violation: nil error
 func ReturnZeroWithNilError() (target.User, error) {
 	return target.User{}, nil // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
@@ -283,6 +322,98 @@ func ReturnZeroWithErrorAssignedInDefer() (u *target.User, err error) {
 		return &target.User{}, err // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	}
 	return nil, nil
+}
+
+// Violation: a deferred function may set the named error result to nil after
+// the return, whatever the returned error is
+func ReturnZeroWithNamedErrorResetInDefer(n int) (u target.User, err error) {
+	defer func() {
+		if errors.Is(err, target.ErrNotFound) {
+			err = nil
+		}
+	}()
+	if n == 0 {
+		return target.User{}, target.ErrNotFound // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: a deferred call may set the named error result through its address
+func ReturnZeroWithAddressTakenNamedError() (u *target.User, err error) {
+	defer resetError(&err)
+	return &target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: errors.Join in a deferred function may return nil
+func ReturnZeroWithNamedErrorJoinedInDefer() (u target.User, err error) {
+	defer func() { err = errors.Join(err, lookupError()) }()
+	return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+type closer struct{}
+
+func (closer) Close() error { return nil }
+
+// Violation: guards are not used for assignments in deferred functions, so
+// the close error idiom disables the exemption, even before the defer
+func ReturnZeroWithCloseErrorInDefer(c closer, n int) (u target.User, err error) {
+	if n == 0 {
+		return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	defer func() {
+		if cerr := c.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// OK: the close error is wrapped with fmt.Errorf, which is non-nil
+func ReturnZeroWithWrappedCloseErrorInDefer(c closer) (u target.User, err error) {
+	defer func() {
+		if cerr := c.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close: %w", cerr)
+		}
+	}()
+	return target.User{}, errors.New("failed")
+}
+
+// Violation: the named error result of a function literal is reset in defer
+func ReturnZeroInFuncLitWithNamedErrorResetInDefer() {
+	_ = func() (u target.User, err error) {
+		defer func() { err = nil }()
+		return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+}
+
+// OK: deferred functions only set the named error result to non-nil values
+func ReturnZeroWithNamedErrorWrappedInDefer() (u target.User, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("wrapped: %w", err)
+		}
+	}()
+	_, err = findUser()
+	if err != nil {
+		return target.User{}, err
+	}
+	return target.User{}, errors.New("failed")
+}
+
+// OK: the deferred function sets the named result of the enclosing function,
+// not of the function literal
+func ReturnZeroInFuncLitWithOuterNamedErrorResetInDefer() (err error) {
+	defer func() { err = nil }()
+	f := func() (target.User, error) {
+		return target.User{}, errors.New("failed")
+	}
+	_, err = f()
+	return err
 }
 
 var errGlobal error
@@ -502,9 +633,12 @@ var errReassignedSentinel = errors.New("reassigned")
 
 var errAddressTakenSentinel = errors.New("address taken")
 
+var errRewrappedSentinel = errors.New("rewrapped") // want errRewrappedSentinel:`nonNilError`
+
 func init() {
 	errReassignedSentinel = nil
 	resetError(&errAddressTakenSentinel)
+	errRewrappedSentinel = fmt.Errorf("rewrapped: %w", errRewrappedSentinel)
 }
 
 // OK: sentinel errors initialized with a non-nil value and never modified
@@ -518,6 +652,8 @@ func ReturnZeroWithSentinelError(n int) (target.User, error) {
 		return target.User{}, errWrappedSentinel
 	case 3:
 		return target.User{}, errAliasSentinel
+	case 4:
+		return target.User{}, errRewrappedSentinel
 	}
 	return target.User{}, errConcreteSentinel
 }
@@ -619,6 +755,53 @@ func ReturnZeroWithReassignmentAfterNonNilAssignment() (target.User, error) {
 	err := errors.New("failed")
 	_, err = findUser()
 	return target.User{}, err // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// OK: only non-nil values are assigned after the nil check
+func ReturnZeroWithConditionalWrapInGuardedBranch(cond bool) (*target.User, error) {
+	_, err := findUser()
+	if err != nil {
+		if cond {
+			err = fmt.Errorf("wrapped: %w", err)
+		}
+		return &target.User{}, err
+	}
+	return nil, nil
+}
+
+// OK: only non-nil values are assigned in the other branches
+func ReturnZeroWithNonNilAssignmentInOtherBranch(n int) (target.User, error) {
+	_, err := findUser()
+	if err == nil {
+		return *target.NewUser("name", "email@test.com", 25), nil
+	}
+	switch n {
+	case 0:
+		err = target.ErrNotFound
+	default:
+		return target.User{}, err
+	}
+	if n == 1 {
+		err = fmt.Errorf("wrapped: %w", err)
+	} else {
+		return target.User{}, err
+	}
+	return target.User{}, err
+}
+
+// Violation: branches are not distinguished, so a possibly nil value assigned
+// in the other branch disables the early exit
+func ReturnZeroWithPossiblyNilAssignmentInOtherBranch(cond bool) (target.User, error) {
+	_, err := findUser()
+	if err == nil {
+		return *target.NewUser("name", "email@test.com", 25), nil
+	}
+	if cond {
+		err = lookupError()
+	} else {
+		return target.User{}, err // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	return *target.NewUser("name", "email@test.com", 25), nil
 }
 
 // Violation: the non-nil assignment may not run

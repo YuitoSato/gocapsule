@@ -10,7 +10,7 @@ import (
 )
 
 // exportConstructorFacts scans the current package for New** functions
-// and exports facts for their corresponding struct types.
+// and exports facts for their corresponding types, except interfaces.
 func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 	nodeFilter := []ast.Node{
 		(*ast.FuncDecl)(nil),
@@ -54,6 +54,12 @@ func exportConstructorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
 
 		// Verify the type is defined in the current package
 		if namedType.Obj().Pkg() != pass.Pkg {
+			return
+		}
+
+		// Interfaces have nothing to encapsulate: their zero value is nil,
+		// like *T, and any type implementing them can be converted to them
+		if types.IsInterface(namedType) {
 			return
 		}
 

@@ -52,3 +52,18 @@ func NewCount() int {
 func NewBuffer() *bytes.Buffer {
 	return bytes.NewBuffer(nil)
 }
+
+// Store has no fact: an interface has nothing to encapsulate, even if a
+// constructor returns it
+type Store interface {
+	Get(key string) string
+}
+
+type store struct{}
+
+func (store) Get(string) string { return "" }
+
+// NewStore returns an implementation of Store
+func NewStore() Store {
+	return store{}
+}
