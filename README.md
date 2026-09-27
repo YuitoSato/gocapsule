@@ -59,6 +59,8 @@ gocapsule -allowZero ./...
 | `&users.User{Name: ""}` | ❌ Reported | ❌ Reported |
 | `email.Email("")` | ❌ Reported | ❌ Reported |
 
+See [Zero Values](#zero-values-v100) for examples, including zero values that are allowed because they are returned with a non-nil error.
+
 Standard library types whose zero value is ready to use, such as `bytes.Buffer` (`var buf bytes.Buffer`), `math/big.Int` (`new(big.Int)`), and `reflect.Value`, have constructors and are therefore reported by default too. To allow them while keeping zero values of your own types reported, ignore those packages instead of using `-allowZero`. These types have no exported fields, so ignoring their packages loses no other checks:
 
 ```bash
@@ -227,6 +229,8 @@ func Broken() (user.User, error) {
     return user.User{}, nil
 }
 ```
+
+The exact conditions are listed in rules 5 and 6 of [Rules](#rules). See [Limitations](#limitations) for zero values that are not detected, and for safe code that is still reported.
 
 ### Defined Types
 
