@@ -1,5 +1,7 @@
 package target
 
+import "errors"
+
 // User is a struct with a constructor
 type User struct { // want User:`&\{NewUser\}`
 	Name  string
@@ -54,6 +56,14 @@ func InternalUsage() {
 
 	// OK: same package can use type conversion directly
 	_ = Email("internal@test.com")
+
+	// OK: same package can create zero values
+	var u User
+	_ = u
+	_ = User{}
+	_ = new(User)
+	var e Email
+	_ = e
 }
 
 // Email is a defined type with a constructor
@@ -77,3 +87,18 @@ type Repository struct { // want Repository:`&\{New\}`
 func New(name string) *Repository {
 	return &Repository{Name: name}
 }
+
+// ErrNotFound is a sentinel error
+var ErrNotFound = errors.New("not found") // want ErrNotFound:`nonNilError`
+
+// AppError is an error type with a constructor
+type AppError struct { // want AppError:`&\{NewAppError\}`
+	Code int
+}
+
+// NewAppError creates a new AppError
+func NewAppError(code int) *AppError {
+	return &AppError{Code: code}
+}
+
+func (e *AppError) Error() string { return "app error" }

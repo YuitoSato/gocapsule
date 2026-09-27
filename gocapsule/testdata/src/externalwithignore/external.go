@@ -1,6 +1,9 @@
 package externalwithignore
 
-import "ignored"
+import (
+	"ignored"
+	"target"
+)
 
 func TestIgnoredPackage() {
 	// When "ignored" package is in ignorePackages, these should NOT be violations
@@ -20,4 +23,17 @@ func TestIgnoredPackage() {
 
 	// Using constructor is always OK
 	_ = ignored.NewIgnoredType("test")
+
+	// Zero values - should be ignored
+	_ = ignored.IgnoredStruct{}
+	var z ignored.IgnoredStruct
+	_ = z
+	_ = new(ignored.IgnoredStruct)
+	var t ignored.IgnoredType
+	_ = t
+}
+
+func TestNotIgnoredPackage() {
+	// Violation: "target" is not ignored, since package paths must match exactly
+	_ = &target.User{Name: "test"} // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }

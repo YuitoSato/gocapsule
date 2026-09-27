@@ -59,3 +59,14 @@ func TestPlainNewConstructor() {
 	// Violation: field reassignment
 	repo.Name = "modified" // want `direct field assignment to Repository.Name is not allowed; Repository has a constructor New\(\)`
 }
+
+func TestConstructorNames() {
+	// Violation: the constructor name matches the type name case-insensitively
+	_ = &target.HTTPClient{URL: "http://example.com"} // want `direct struct literal creation of HTTPClient is not allowed; use target.NewHttpClient\(\) instead`
+
+	// OK: these types have no constructor
+	_ = &target.Admin{Name: "admin"}
+	_ = target.Line{}
+	var s target.Session
+	s.ID = "id"
+}
