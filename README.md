@@ -120,7 +120,7 @@ version: v2.7.2
 plugins:
   - module: 'github.com/YuitoSato/gocapsule'
     import: 'github.com/YuitoSato/gocapsule/gocapsule'
-    version: v1.1.0
+    version: v1.2.0
 ```
 
 2. Add to `.golangci.yml`:
