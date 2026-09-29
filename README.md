@@ -5,7 +5,7 @@ A Go linter that enforces encapsulation by preventing direct struct creation, ze
 ## Features
 
 - **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals
-- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors, except when returned together with a non-nil error. Use `-allowZero` to allow them
+- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors, except when returned together with a non-nil error or, with `-allowZeroWithFalseOk` (v1.1.0+), a false ok. Use `-allowZero` to allow all of them
 - **Prevent direct type conversion**: For defined types (e.g., `type Email string`) with constructors, external packages cannot use direct type conversions
 - **Prevent field reassignment**: External packages cannot reassign public fields of structs that have constructors
 - **Embedded field support**: Detects violations through embedded field access (e.g., `container.User.Name = "x"`)
@@ -67,6 +67,38 @@ Standard library types whose zero value is ready to use, such as `bytes.Buffer` 
 gocapsule -ignorePackages="bytes,math/big,reflect" ./...
 ```
 
+#### Allow Zero Values Returned with a False Ok (v1.1.0+)
+
+A zero value returned together with a non-nil error is allowed by default. Use the `-allowZeroWithFalseOk` flag to also allow a zero value returned together with a false ok, as in the comma-ok idiom:
+
+```bash
+gocapsule -allowZeroWithFalseOk ./...
+```
+
+The last result is treated as the ok if it is a `bool`. This is opt-in because a `bool` result does not mean "ok" in every project: `func Upsert(u User) (User, bool)` may return whether the user was created. Set it only if the last `bool` result tells whether the other results can be used in your code.
+
+```go
+func FindUser(id string) (user.User, bool) {
+    if id == "" {
+        // OK: a constant false
+        return user.User{}, false
+    }
+    u, ok := users[id]
+    if !ok {
+        // OK: ok is false here
+        return user.User{}, ok
+    }
+    return u, true
+}
+
+func LookupUser(id string) (user.User, bool, error) {
+    // NG: the last result is an error, not a bool
+    return user.User{}, false, nil
+}
+```
+
+The exact conditions are listed in rule 8 of [Rules](#rules).
+
 ### With golangci-lint
 
 1. Create `.custom-gcl.yml`:
@@ -93,6 +125,8 @@ linters:
         settings:
           # Optional: allow zero values (default: false)
           allowZero: false
+          # Optional (v1.1.0+): allow zero values returned with a false ok (default: false)
+          allowZeroWithFalseOk: false
           # Optional: package paths to ignore
           ignorePackages:
             - net/http
@@ -257,7 +291,7 @@ func FindUserByName(name string) (user.User, error) {
 }
 ```
 
-The exact conditions are listed in rules 5 to 7 of [Rules](#rules). See [Limitations](#limitations) for zero values that are not detected, and for safe code that is still reported.
+The exact conditions are listed in rules 5 to 7 of [Rules](#rules). See [Limitations](#limitations) for zero values that are not detected, and for safe code that is still reported. To also allow zero values returned with a false ok, e.g. `return user.User{}, false`, see [Allow Zero Values Returned with a False Ok](#allow-zero-values-returned-with-a-false-ok-v110).
 
 ### Defined Types
 
@@ -370,6 +404,23 @@ func main() {
    }
    ```
 
+8. **Zero values returned with a false ok** (v1.1.0+): if `-allowZeroWithFalseOk` is set, `T{}`, `&T{}`, and `new(T)` are also allowed when they appear directly in a `return` statement whose last result is a `bool` (or a type whose underlying type is `bool`) that is guaranteed to be false. Only the last result is treated as the ok: in `func f() (T, bool, error)`, `return T{}, false, nil` is reported.
+
+   A **false expression** is a constant false, e.g. `false`, `!true`, or `notFound` declared as `const notFound = false`. A **false assignment** is a single assignment of a false expression, e.g. `ok = false` or `ok := false`, or a declaration without a value, e.g. `var ok bool`.
+
+   A local variable `ok` is also guaranteed to be false at the `return`:
+   - in the body of `if !ok`, `if ok == false`, `if ok != true`, or `if ... && !ok`
+   - in the `else` of `if ok`
+   - after `if ok { ... }` (or `if ... || ok`) in the same block, when the `if` body ends with `return`, `panic`, `break`, or `continue`. A labeled statement between the check and the `return` disables this, as in rule 6
+   - after a false assignment in the same block
+
+   In all of these cases:
+   - `ok` must be of a `bool` type without methods, since a method call with a pointer receiver can take its address
+   - `ok` must only be assigned by false assignments between the check and the `return`
+   - `ok` must never have its address taken, and function literals nested in the function that declares `ok` must only assign it by false assignments
+
+   If the ok result is named, e.g. `func f() (u user.User, ok bool)`, the last condition also applies to the named result `ok`, even when the `return` statement returns `false`, because a deferred call can overwrite a named result after the `return`, e.g. `defer func() { ok = true }()`
+
 ## Migrating from v0.x
 
 v1.0.0 reports zero values of types with constructors by default:
@@ -426,6 +477,7 @@ The following are **reported** even though the zero value is safe. The data flow
 | `return user.User{}, newError("x")` where `newError` always returns a non-nil error but is not verified by rule 7 of [Rules](#rules), e.g. it calls an interface method or uses `defer` | Rewrite `newError` in a verified form, return a concrete type from it, e.g. `func newError(msg string) *MyError`, or return a pointer: `return nil, newError("x")` |
 | `err = errs.Wrap(err, "...")` followed by `return user.User{}, err` (a guarded `err` counts only as an argument of a call directly in the `return`, not in an assignment) | `return user.User{}, errs.Wrap(err, "...")` |
 | `switch { case err != nil: return user.User{}, err }` | `if err != nil { ... }` |
+| With `-allowZeroWithFalseOk`, `return user.User{}, ok` where `ok` is false but not guaranteed by rule 8, e.g. in `switch { case !ok: }`, after a loop that assigns `ok`, or a named result `ok` that is never assigned | `return user.User{}, false` |
 | `if err != nil { ... }` in a loop, followed by `return user.User{}, err` after the loop | `if err != nil { return user.User{}, err }` in the loop |
 | `return []user.User{{}}, err` (zero value nested in another literal) | Return `nil` |
 | `if cond { err = f() } else { return user.User{}, err }` after an early exit (branches are not distinguished, so a possibly nil value assigned in another branch counts) | `if err != nil { return user.User{}, err }` in the branch |

@@ -120,7 +120,7 @@ func nilablePackageVars(pass *analysis.Pass, inspect *inspector.Inspector) map[*
 				continue
 			}
 			v, ok := pass.TypesInfo.Uses[ident].(*types.Var)
-			if ok && v.Parent() == pass.Pkg.Scope() && !assignsNonNil(pass, cur.Node(), v) {
+			if ok && v.Parent() == pass.Pkg.Scope() && !assigns(pass, cur.Node(), v, nonNilGuarantee) {
 				nilable[v] = true
 			}
 		}
@@ -128,29 +128,12 @@ func nilablePackageVars(pass *analysis.Pass, inspect *inspector.Inspector) map[*
 	return nilable
 }
 
-// isReturnedWithNonNilError checks if the zero value expression at cur is
-// returned together with an error that is guaranteed to be non-nil, e.g.
-// `return &T{}, err` inside `if err != nil { ... }`. The caller cannot use the
-// zero value without ignoring the error.
-func isReturnedWithNonNilError(pass *analysis.Pass, cur inspector.Cursor) bool {
-	// Walk up through parentheses and & to the return operand
-	for isParenOrAddr(cur.Parent().Node()) {
-		cur = cur.Parent()
-	}
-
-	kind, zeroIndex := cur.ParentEdge()
-	if kind != edge.ReturnStmt_Results {
-		return false
-	}
-	retCur := cur.Parent()
-	ret := retCur.Node().(*ast.ReturnStmt)
-
-	sig := enclosingSignature(pass, retCur)
-	if sig == nil || sig.Results().Len() != len(ret.Results) {
-		return false
-	}
-
-	for i := range ret.Results {
+// isReturnedWithNonNilError checks if an error result of the return statement
+// at retCur, other than the zero value at zeroIndex, is guaranteed to be
+// non-nil, e.g. `return &T{}, err` inside `if err != nil { ... }`. The caller
+// cannot use the zero value without ignoring the error.
+func isReturnedWithNonNilError(pass *analysis.Pass, retCur inspector.Cursor, sig *types.Signature, zeroIndex int) bool {
+	for i := range sig.Results().Len() {
 		if i == zeroIndex {
 			continue
 		}
@@ -160,7 +143,7 @@ func isReturnedWithNonNilError(pass *analysis.Pass, cur inspector.Cursor) bool {
 		}
 		// A deferred call may set a named result to nil after the return,
 		// e.g. `defer func() { err = nil }()`
-		if result.Name() != "" && mayWriteNilIndirectly(pass, retCur, result) {
+		if result.Name() != "" && mayBreakIndirectly(pass, retCur, result, nonNilGuarantee) {
 			continue
 		}
 		if isNonNilOperand(pass, retCur.ChildAt(edge.ReturnStmt_Results, i), result.Type()) {
@@ -171,49 +154,13 @@ func isReturnedWithNonNilError(pass *analysis.Pass, cur inspector.Cursor) bool {
 	return false
 }
 
-// isParenOrAddr checks if n is a parenthesized expression or &x.
-func isParenOrAddr(n ast.Node) bool {
-	switch n := n.(type) {
-	case *ast.ParenExpr:
-		return true
-	case *ast.UnaryExpr:
-		return n.Op == token.AND
-	}
-	return false
-}
-
-// enclosingSignature returns the signature of the innermost function
-// (declaration or literal) enclosing cur.
-func enclosingSignature(pass *analysis.Pass, cur inspector.Cursor) *types.Signature {
-	for c := range cur.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
-		switch fn := c.Node().(type) {
-		case *ast.FuncDecl:
-			if obj, ok := pass.TypesInfo.Defs[fn.Name].(*types.Func); ok {
-				return obj.Signature()
-			}
-		case *ast.FuncLit:
-			if sig, ok := pass.TypesInfo.TypeOf(fn).(*types.Signature); ok {
-				return sig
-			}
-		}
-		return nil
-	}
-	return nil
-}
-
 // isNonNilOperand checks if the operand at cur is guaranteed to be a non-nil
 // value of typ, taking nil checks before it into account.
 func isNonNilOperand(pass *analysis.Pass, cur inspector.Cursor, typ types.Type) bool {
-	for {
-		if _, ok := cur.Node().(*ast.ParenExpr); !ok {
-			break
-		}
-		cur = cur.ChildAt(edge.ParenExpr_X, -1)
-	}
-
+	cur = unparenCursor(cur)
 	switch e := cur.Node().(type) {
 	case *ast.Ident:
-		if isGuardedNonNil(pass, cur, e) {
+		if isGuarded(pass, cur, e, nonNilGuarantee) {
 			return true
 		}
 	case *ast.CallExpr:
@@ -226,6 +173,17 @@ func isNonNilOperand(pass *analysis.Pass, cur inspector.Cursor, typ types.Type) 
 		}
 	}
 	return isNonNilExpr(pass, cur.Node().(ast.Expr), typ)
+}
+
+// unparenCursor returns the cursor of the expression at cur without
+// parentheses.
+func unparenCursor(cur inspector.Cursor) inspector.Cursor {
+	for {
+		if _, ok := cur.Node().(*ast.ParenExpr); !ok {
+			return cur
+		}
+		cur = cur.ChildAt(edge.ParenExpr_X, -1)
+	}
 }
 
 // isNonNilExpr checks if expr is always a non-nil value of typ, regardless of
@@ -330,40 +288,57 @@ func isNonNilVar(pass *analysis.Pass, ident *ast.Ident) bool {
 	return ok && pass.ImportObjectFact(v, new(NonNilError))
 }
 
-// isGuardedNonNil checks if the identifier at cur refers to a local variable
-// that is guaranteed to be non-nil by a nil check.
-func isGuardedNonNil(pass *analysis.Pass, cur inspector.Cursor, ident *ast.Ident) bool {
-	obj, ok := pass.TypesInfo.Uses[ident].(*types.Var)
-	if !ok || !isLocalVar(obj) {
-		return false
-	}
-
-	// Only interfaces and pointers: a method call on other types (e.g. a
-	// slice type with a pointer receiver method) can implicitly take &obj
-	switch obj.Type().Underlying().(type) {
-	case *types.Interface, *types.Pointer:
-	default:
-		return false
-	}
-
-	return hasNilCheck(pass, cur, obj) && !mayWriteNilIndirectly(pass, cur, obj)
+// guarantee is a property of a local variable that checks and assignments
+// before a point can guarantee at that point, such as err != nil inside
+// `if err != nil { ... }`.
+type guarantee struct {
+	// tracked checks if a variable of typ can be tracked. A method call can
+	// implicitly take the address of a variable of some types, e.g. a slice
+	// type with a pointer receiver method.
+	tracked func(typ types.Type) bool
+	// implied checks if cond evaluating to condValue guarantees the property
+	// for obj.
+	implied func(pass *analysis.Pass, cond ast.Expr, obj types.Object, condValue bool) bool
+	// holds checks if expr is always a value of typ with the property.
+	holds func(pass *analysis.Pass, expr ast.Expr, typ types.Type) bool
+	// zero is whether the zero value has the property.
+	zero bool
 }
 
-// hasNilCheck walks up from cur to the innermost function, looking for a nil
-// check that guarantees obj != nil at cur, with no write of a possibly nil
-// value to obj in between.
-// The supported nil checks are:
+// nonNilGuarantee guarantees that a variable is non-nil. Only interfaces and
+// pointers are tracked.
+var nonNilGuarantee = guarantee{
+	tracked: isNilable,
+	implied: impliesNonNil,
+	holds:   isNonNilExpr,
+}
+
+// isGuarded checks if the identifier at cur refers to a local variable that
+// is guaranteed to have the property of g by a check, e.g. a nil check.
+func isGuarded(pass *analysis.Pass, cur inspector.Cursor, ident *ast.Ident, g guarantee) bool {
+	obj, ok := pass.TypesInfo.Uses[ident].(*types.Var)
+	if !ok || !isLocalVar(obj) || !g.tracked(obj.Type()) {
+		return false
+	}
+	return hasCheck(pass, cur, obj, g) && !mayBreakIndirectly(pass, cur, obj, g)
+}
+
+// hasCheck walks up from cur to the innermost function, looking for a check
+// that guarantees the property of g for obj at cur, with no write of a value
+// that may not have it in between.
+// For nonNilGuarantee, the supported checks are:
 //
 //	if err != nil { <cur> }             // or the else of `if err == nil`
 //	if err == nil { return ... }; <cur> // early exit
 //	err = fmt.Errorf("...: %w", err); <cur>
 //
 // errors.Is(err, target) with a non-nil target and errors.As(err, ...) can
-// be used in place of err != nil.
-func hasNilCheck(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bool {
+// be used in place of err != nil. The checks for other properties have the
+// same forms, e.g. `if !ok { <cur> }` for falseGuarantee.
+func hasCheck(pass *analysis.Pass, cur inspector.Cursor, obj types.Object, g guarantee) bool {
 	for c := cur; ; c = c.Parent() {
-		// c contains cur, so a write in c may run after the nil check
-		if mayWriteNilIn(pass, c.Node(), obj) {
+		// c contains cur, so a write in c may run after the check
+		if mayBreakIn(pass, c.Node(), obj, g) {
 			return false
 		}
 
@@ -374,11 +349,11 @@ func hasNilCheck(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bo
 		case *ast.IfStmt:
 			// The body runs when the condition is true, the else when it is false
 			if (kind == edge.IfStmt_Body || kind == edge.IfStmt_Else) &&
-				impliesNonNil(pass, n.Cond, obj, kind == edge.IfStmt_Body) {
+				g.implied(pass, n.Cond, obj, kind == edge.IfStmt_Body) {
 				return true
 			}
 		case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
-			if stmts := stmtList(n, kind); stmts != nil && hasPrecedingNilCheck(pass, stmts, index, obj) {
+			if stmts := stmtList(n, kind); stmts != nil && hasPrecedingCheck(pass, stmts, index, obj, g) {
 				return true
 			}
 		}
@@ -398,12 +373,12 @@ func stmtList(n ast.Node, kind edge.Kind) []ast.Stmt {
 	return nil
 }
 
-// hasPrecedingNilCheck checks if a statement before stmts[index], which
-// contains cur, guarantees obj != nil with no write of a possibly nil value
-// to obj after it: an if statement that exits early unless obj != nil, e.g.
-// `if err == nil { return u, nil }`, or an assignment of a non-nil value.
-func hasPrecedingNilCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj types.Object) bool {
-	// A goto may jump to a labeled statement, skipping the nil check
+// hasPrecedingCheck checks if a statement before stmts[index], which contains
+// cur, guarantees the property of g for obj with no write of a value that may
+// not have it after it: an if statement that exits early unless obj has it,
+// e.g. `if err == nil { return u, nil }`, or an assignment of a value with it.
+func hasPrecedingCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj types.Object, g guarantee) bool {
+	// A goto may jump to a labeled statement, skipping the check
 	if _, ok := stmts[index].(*ast.LabeledStmt); ok {
 		return false
 	}
@@ -411,26 +386,27 @@ func hasPrecedingNilCheck(pass *analysis.Pass, stmts []ast.Stmt, index int, obj 
 	for _, stmt := range slices.Backward(stmts[:index]) {
 		switch s := stmt.(type) {
 		case *ast.IfStmt:
-			if exitsEarly(pass, s.Body) && impliesNonNil(pass, s.Cond, obj, false) {
-				return s.Else == nil || !mayWriteNilIn(pass, s.Else, obj)
+			if exitsEarly(pass, s.Body) && g.implied(pass, s.Cond, obj, false) {
+				return s.Else == nil || !mayBreakIn(pass, s.Else, obj, g)
 			}
 		case *ast.LabeledStmt:
 			return false
 		}
-		if assignsNonNil(pass, stmt, obj) {
+		if assigns(pass, stmt, obj, g) {
 			return true
 		}
-		if mayWriteNilIn(pass, stmt, obj) {
+		if mayBreakIn(pass, stmt, obj, g) {
 			return false
 		}
 	}
 	return false
 }
 
-// assignsNonNil checks if n assigns a non-nil value to obj, e.g.
+// assigns checks if n assigns a value with the property of g to obj, e.g.
 // `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or
-// `var err error = &MyError{}`.
-func assignsNonNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
+// `var err error = &MyError{}` for nonNilGuarantee, and `var ok bool` for
+// falseGuarantee.
+func assigns(pass *analysis.Pass, n ast.Node, obj types.Object, g guarantee) bool {
 	var lhs, rhs []ast.Expr
 	switch s := n.(type) {
 	case *ast.AssignStmt:
@@ -444,6 +420,12 @@ func assignsNonNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
 			return false
 		}
 		spec := decl.Specs[0].(*ast.ValueSpec)
+		// Without values, the variables are set to the zero value
+		if len(spec.Values) == 0 {
+			return g.zero && slices.ContainsFunc(spec.Names, func(name *ast.Ident) bool {
+				return pass.TypesInfo.Defs[name] == obj
+			})
+		}
 		for _, name := range spec.Names {
 			lhs = append(lhs, name)
 		}
@@ -455,7 +437,7 @@ func assignsNonNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
 		return false
 	}
 	ident, ok := ast.Unparen(lhs[0]).(*ast.Ident)
-	return ok && pass.TypesInfo.ObjectOf(ident) == obj && isNonNilExpr(pass, rhs[0], obj.Type())
+	return ok && pass.TypesInfo.ObjectOf(ident) == obj && g.holds(pass, rhs[0], obj.Type())
 }
 
 // exitsEarly checks if a statement never continues to the next statement: it
@@ -548,11 +530,11 @@ func isNilComparison(pass *analysis.Pass, e *ast.BinaryExpr, obj types.Object) b
 		(isNil(pass, e.X) && refersTo(pass, e.Y, obj))
 }
 
-// mayWriteNilIndirectly checks if obj may be set to nil other than by a
-// direct assignment in the function that declares it: its address is taken,
-// or a function literal nested in that function writes a possibly nil value
-// to it.
-func mayWriteNilIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types.Object) bool {
+// mayBreakIndirectly checks if obj may be set to a value without the property
+// of g other than by a direct assignment in the function that declares it:
+// its address is taken, or a function literal nested in that function writes
+// a value that may not have it to obj.
+func mayBreakIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types.Object, g guarantee) bool {
 	// Local variables can only be captured within their top-level declaration
 	var decl inspector.Cursor
 	for c := range cur.Enclosing() {
@@ -563,7 +545,7 @@ func mayWriteNilIndirectly(pass *analysis.Pass, cur inspector.Cursor, obj types.
 	}
 
 	for c := range decl.Preorder(writeNodes...) {
-		if !mayWriteNil(pass, c.Node(), obj) {
+		if !mayBreak(pass, c.Node(), obj, g) {
 			continue
 		}
 		if _, isAddr := c.Node().(*ast.UnaryExpr); isAddr || isInNestedFunc(c, obj) {
@@ -609,23 +591,24 @@ func writtenExprs(n ast.Node) []ast.Expr {
 	return nil
 }
 
-// mayWriteNilIn checks if obj may be set to nil anywhere within node.
-func mayWriteNilIn(pass *analysis.Pass, node ast.Node, obj types.Object) bool {
+// mayBreakIn checks if obj may be set to a value without the property of g
+// anywhere within node.
+func mayBreakIn(pass *analysis.Pass, node ast.Node, obj types.Object, g guarantee) bool {
 	for n := range ast.Preorder(node) {
-		if mayWriteNil(pass, n, obj) {
+		if mayBreak(pass, n, obj, g) {
 			return true
 		}
 	}
 	return false
 }
 
-// mayWriteNil checks if n writes to obj, other than by a single assignment of
-// a non-nil value such as `err = fmt.Errorf("...: %w", err)`, which cannot
-// make obj nil.
-func mayWriteNil(pass *analysis.Pass, n ast.Node, obj types.Object) bool {
+// mayBreak checks if n writes to obj, other than by a single assignment of a
+// value with the property of g such as `err = fmt.Errorf("...: %w", err)` for
+// nonNilGuarantee, which cannot make obj nil.
+func mayBreak(pass *analysis.Pass, n ast.Node, obj types.Object, g guarantee) bool {
 	for _, expr := range writtenExprs(n) {
 		if refersTo(pass, expr, obj) {
-			return !assignsNonNil(pass, n, obj)
+			return !assigns(pass, n, obj, g)
 		}
 	}
 	return false
