@@ -230,7 +230,34 @@ func Broken() (user.User, error) {
 }
 ```
 
-The exact conditions are listed in rules 5 and 6 of [Rules](#rules). See [Limitations](#limitations) for zero values that are not detected, and for safe code that is still reported.
+Error helpers are trusted too (v1.1.0+), including your own and those of libraries such as `github.com/pkg/errors`, as long as gocapsule can verify that they return a non-nil error for non-nil error arguments (rule 7). A call with an error argument that may be nil is still reported:
+
+```go
+// package errs
+func Wrap(err error, msg string) error {
+    if err == nil {
+        return nil
+    }
+    return &wrapError{cause: err, msg: msg}
+}
+```
+
+```go
+func FindUserByName(name string) (user.User, error) {
+    u, err := repo.FindByName(name)
+    if err != nil {
+        // OK: Wrap returns a non-nil error because err is non-nil here
+        return user.User{}, errs.Wrap(err, "find user")
+    }
+    if u == nil {
+        // NG: err is nil here, so Wrap returns nil
+        return user.User{}, errs.Wrap(err, "user not found")
+    }
+    return *u, nil
+}
+```
+
+The exact conditions are listed in rules 5 to 7 of [Rules](#rules). See [Limitations](#limitations) for zero values that are not detected, and for safe code that is still reported.
 
 ### Defined Types
 
@@ -272,7 +299,9 @@ func main() {
    The following are **non-nil expressions**:
    - `errors.New(...)` or `fmt.Errorf(...)`
    - `&x` or `new(E)`, e.g. `&MyError{}`
-   - a value of a concrete (non-interface) type returned as an interface, e.g. `NewAppError(...)` returning `*AppError`. As in Go itself, a nil `*AppError` stored in an `error` is non-nil. A function returning `error`, such as your own helper or `github.com/pkg/errors.New`, is not trusted
+   - a value of a concrete (non-interface) type returned as an interface, e.g. `NewAppError(...)` returning `*AppError`. As in Go itself, a nil `*AppError` stored in an `error` is non-nil. Any other function returning `error` is trusted only as described in the next item
+   - (v1.1.0+) a call to a verified function (rule 7) whose arguments for the error parameters it requires to be non-nil are non-nil expressions, e.g. `errs.New("...")`, `errs.Wrap(ErrNotFound, "...")`, or `github.com/pkg/errors.New("...")`
+   - (v1.1.0+) a conversion of a non-nil expression to an interface or pointer type, e.g. `error(&MyError{})`
    - a package-level variable (e.g. a sentinel error such as `ErrNotFound` or `io.EOF`) that is initialized with a non-nil expression, and in its own package is only assigned by non-nil assignments and never has its address taken
 
    A **non-nil assignment** is a single assignment of a non-nil expression, e.g. `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or `var err error = &MyError{}`. A multiple assignment such as `n, err = 0, errors.New("...")` is not.
@@ -289,6 +318,57 @@ func main() {
    - `err` must never have its address taken, and function literals nested in the function that declares `err` must only assign it by non-nil assignments
 
    If the error result is named, e.g. `func f() (u user.User, err error)`, the last condition also applies to the named result `err`, even when the `return` statement returns `errors.New(...)`, because a deferred call can overwrite a named result after the `return`, e.g. `defer func() { err = nil }()`
+
+   (v1.1.0+) Directly in the `return` statement, the operand of a conversion, or an argument for an error parameter that a verified function requires to be non-nil, can also be a local variable guaranteed to be non-nil as described above, even in a nested call, e.g. `errs.Wrap(err, "...")` or `errs.Wrap(errs.WithCode(err, 404), "...")` inside `if err != nil`.
+
+7. **Verified functions** (v1.1.0+): a function is verified if gocapsule can prove that it returns a non-nil error whenever certain error parameters (interfaces and pointers that implement `error`), possibly none, are non-nil. gocapsule verifies the functions and methods whose only result is an interface that implements `error`, including generic ones and those in your dependencies, and records which error parameters must be non-nil. A function that needs none of them, such as `errs.New(msg string) error`, always returns a non-nil error. Functions that return a concrete type such as `*MyError` are already non-nil expressions by rule 6.
+
+   Unlike rule 6, gocapsule follows every path through the function. It assumes that the error parameters are non-nil at the start, and tracks which local variables of interface and pointer types are non-nil:
+   - a variable is non-nil after it is assigned a value that is non-nil at that point, e.g. `err = errs.WithStack(err)` for a non-nil `err`, and in the branch of a nil check, e.g. `if err != nil`, `if err == nil { ... } else`, or `switch { case err != nil: }`
+   - a variable is non-nil after a branch only if it is non-nil at the end of every path that reaches it, e.g. when it is assigned a non-nil value in both the `if` and the `else`
+   - a branch that requires a non-nil variable to be nil is never taken, e.g. `if err == nil { return nil }`
+   - a variable is not tracked if its address is taken or a nested function literal may assign it a possibly nil value, since these may change it at any time, or if it is assigned by `for ... = range`
+
+   Every reachable `return` statement, including a bare `return` of the named result, must return a non-nil value. An error parameter must be non-nil at the call site only if the proof needs it, e.g. `Coded(404, nil)` below is non-nil. A function with a `defer` statement is not verified, because a deferred call may recover from a panic, and the function then returns a nil error. A function that calls itself, directly or through other functions, is not verified either. A verified function may call other verified functions and return non-nil sentinel errors.
+
+   The following were checked with Go 1.26:
+   - Verified: the constructors and wrappers of `github.com/pkg/errors`, `github.com/cockroachdb/errors`, `github.com/morikuni/failure/v2`, `github.com/rotisserie/eris`, `github.com/samber/oops`, and `golang.org/x/xerrors`. The functions that initialize standard library sentinel errors such as `os.ErrNotExist` are verified too, so these sentinel errors are non-nil
+   - Not verified: `github.com/morikuni/failure` v1 (applies wrappers through an interface method), `errors.Join` and `go.uber.org/multierr` (may return nil), and `google.golang.org/grpc/status.Error` (returns nil for `codes.OK`)
+
+   ```go
+   // Verified: err is non-nil after both branches and the reassignment
+   func Newf(format string, args ...any) error {
+       var err error
+       if len(args) > 0 {
+           err = &formatError{format: format, args: args}
+       } else {
+           err = errors.New(format)
+       }
+       err = WithCode(err, 500)
+       return err
+   }
+
+   // Verified: the last return is never reached when err is non-nil
+   func WithCode(err error, code int) error {
+       if err != nil {
+           return &codeError{cause: err, code: code}
+       }
+       return nil
+   }
+
+   // Verified: always non-nil, so cause may be nil
+   func Coded(code int, cause error) error {
+       return &codeError{cause: cause, code: code}
+   }
+
+   // Not verified: an interface method may return nil
+   func Apply(err error, h Handler) error {
+       if err == nil {
+           return nil
+       }
+       return h.Handle(err)
+   }
+   ```
 
 ## Migrating from v0.x
 
@@ -336,19 +416,22 @@ Zero values are detected syntactically, without data flow analysis. The followin
 
 A sentinel error is trusted to be non-nil only if its own package never assigns it a possibly nil value. Another package can still reassign an exported one (e.g. `user.ErrNotFound = nil`); such reassignments are not detected.
 
-The following are **reported** even though the zero value is safe, because proving that requires data flow analysis. Rewrite them in one of the supported forms:
+The following are **reported** even though the zero value is safe. The data flow analysis of rule 7 only verifies error helpers: the `return` statement that returns a zero value is still checked syntactically by rule 6. Rewrite them in one of the supported forms:
 
 | Pattern | Workaround |
 |---------|------------|
 | `var u user.User` followed by an assignment before use | Declare at the first assignment |
 | `var req Request; json.Unmarshal(b, &req)` | Use `-allowZero` |
-| `var ErrX = newError("x")` returned as `return user.User{}, ErrX` (sentinel initialized by a function other than `errors.New` or `fmt.Errorf`, including `os.ErrNotExist` and `github.com/pkg/errors.New`) | `var ErrX = errors.New("x")`, or return a pointer: `return nil, ErrX` |
-| `return user.User{}, newError("x")` where `newError` always returns a non-nil error but its result type is `error` (including `github.com/pkg/errors.New`) | Return a concrete type from your helper, e.g. `func newError(msg string) *MyError`, or return a pointer: `return nil, newError("x")` |
+| `var ErrX = newError("x")` returned as `return user.User{}, ErrX` (sentinel initialized by a function that is not verified by rule 7 of [Rules](#rules)) | `var ErrX = errors.New("x")`, or return a pointer: `return nil, ErrX` |
+| `return user.User{}, newError("x")` where `newError` always returns a non-nil error but is not verified by rule 7 of [Rules](#rules), e.g. it calls an interface method or uses `defer` | Rewrite `newError` in a verified form, return a concrete type from it, e.g. `func newError(msg string) *MyError`, or return a pointer: `return nil, newError("x")` |
+| `err = errs.Wrap(err, "...")` followed by `return user.User{}, err` (a guarded `err` counts only as an argument of a call directly in the `return`, not in an assignment) | `return user.User{}, errs.Wrap(err, "...")` |
 | `switch { case err != nil: return user.User{}, err }` | `if err != nil { ... }` |
 | `if err != nil { ... }` in a loop, followed by `return user.User{}, err` after the loop | `if err != nil { return user.User{}, err }` in the loop |
 | `return []user.User{{}}, err` (zero value nested in another literal) | Return `nil` |
 | `if cond { err = f() } else { return user.User{}, err }` after an early exit (branches are not distinguished, so a possibly nil value assigned in another branch counts) | `if err != nil { return user.User{}, err }` in the branch |
 | A deferred function that may set the named error result to nil, e.g. `defer func() { if cerr := f.Close(); cerr != nil && err == nil { err = cerr } }()` (a variable on the right-hand side is not treated as non-nil, even after a nil check) or `err = errors.Join(err, f.Close())`. This applies to every `return` in the function, including ones before the `defer` | Assign a non-nil expression: `err = fmt.Errorf("close: %w", cerr)`, or return a pointer: `return nil, err` |
+
+Returning a concrete type does not suit a helper that returns nil for a nil error, such as `Wrap`: its nil `*MyError` stored in an `error` is non-nil (rule 6), so `if err != nil` would be true for it.
 
 ## License
 

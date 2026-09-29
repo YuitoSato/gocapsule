@@ -23,7 +23,7 @@ var Analyzer = &analysis.Analyzer{
 	Doc:       "enforces encapsulation by preventing direct struct creation, zero value creation, type conversion, and field reassignment when New** constructors exist",
 	Run:       run,
 	Requires:  []*analysis.Analyzer{inspect.Analyzer},
-	FactTypes: []analysis.Fact{new(EncapsulatedType), new(NonNilError)},
+	FactTypes: []analysis.Fact{new(EncapsulatedType), new(NonNilError), new(NonNilResult)},
 }
 
 func init() {
@@ -36,10 +36,10 @@ func init() {
 func run(pass *analysis.Pass) (interface{}, error) {
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
-	// Phase 1: Detect and export facts about types with New** constructors
-	// and sentinel errors that are never nil
+	// Phase 1: Detect and export facts about types with New** constructors,
+	// and sentinel errors and functions that never return nil
 	exportConstructorFacts(pass, inspect)
-	exportNonNilErrorFacts(pass, inspect)
+	exportNonNilFacts(pass, inspect)
 
 	// Phase 2: Detect violations (struct literals, zero values, type conversions, and field assignments)
 	detectViolations(pass, inspect)

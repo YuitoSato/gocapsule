@@ -721,7 +721,7 @@ func ReturnZeroWithSliceError(errs errList) (target.User, errList) {
 }
 
 // Violation: a zero value of an error type is not its own non-nil error
-func ReturnZeroAppError() error {
+func ReturnZeroAppError() error { // want ReturnZeroAppError:`nonNilResult`
 	return &target.AppError{} // want `direct struct literal creation of AppError is not allowed; use target.NewAppError\(\) instead`
 }
 
@@ -1018,7 +1018,7 @@ func ReturnNestedZeroWithGuardedError() ([]target.User, error) {
 	return nil, nil
 }
 
-func newError(msg string) error {
+func newError(msg string) error { // want newError:`nonNilResult`
 	return errors.New(msg)
 }
 
@@ -1031,7 +1031,9 @@ var errForwardSentinel = errLaterSentinel // want errForwardSentinel:`nonNilErro
 
 var errLaterSentinel = errors.New("later") // want errLaterSentinel:`nonNilError`
 
-var errFuncSentinel = newError("func")
+var errFuncSentinel = newError("func") // want errFuncSentinel:`nonNilError`
+
+var errNilFuncSentinel = lookupError()
 
 var errRangeAssignedSentinel = errors.New("range assigned")
 
@@ -1052,11 +1054,16 @@ func ReturnZeroWithForwardSentinelError() (target.User, error) {
 	return target.User{}, errForwardSentinel
 }
 
+// OK: a sentinel error initialized by a function that returns a non-nil error
+func ReturnZeroWithFuncSentinelError() (target.User, error) {
+	return target.User{}, errFuncSentinel
+}
+
 // Violation: sentinel errors that are not known to be non-nil
 func ReturnZeroWithUnknownSentinelError(n int) (target.User, error) {
 	switch n {
 	case 0:
-		return target.User{}, errFuncSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		return target.User{}, errNilFuncSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	case 1:
 		return target.User{}, errRangeAssignedSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	}
