@@ -1,6 +1,8 @@
 package externalnonnilerror
 
 import (
+	"errors"
+
 	"errs"
 	"target"
 )
@@ -166,4 +168,53 @@ func ReturnZeroWithWrapAssignment() (target.User, error) {
 func ReturnZeroWithNonNilWrapAssignment() (target.User, error) {
 	err := errs.Wrap(errs.ErrNotFound, "find user")
 	return target.User{}, err
+}
+
+// OK: errors.Join with a non-nil argument, directly or through a verified
+// function
+func ReturnZeroWithJoinedNonNilError(n int) (target.User, error) {
+	_, err := findUser()
+	switch n {
+	case 0:
+		return target.User{}, errors.Join(err, errs.ErrNotFound)
+	case 1:
+		return target.User{}, errors.Join(nil, errs.New("failed"), err)
+	case 2:
+		return target.User{}, errs.JoinNotFound(err)
+	case 3:
+		return target.User{}, errs.JoinBoth(nil, errs.ErrNotFound)
+	case 4:
+		return target.User{}, errs.Wrap(errors.Join(err, errs.ErrNotFound), "joined")
+	}
+	if err != nil {
+		return target.User{}, errors.Join(lookupError(), err)
+	}
+	return target.User{}, nil // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+func notFoundAndNil() (error, error) {
+	return errs.ErrNotFound, nil
+}
+
+// Violation: errors.Join with no argument known to be non-nil
+func ReturnZeroWithJoinedPossiblyNilError(n int) (target.User, error) {
+	_, err := findUser()
+	joined := []error{errs.ErrNotFound}
+	switch n {
+	case 0:
+		return target.User{}, errors.Join() // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	case 1:
+		return target.User{}, errors.Join(nil, err, lookupError()) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	case 2:
+		// The elements of a slice are not checked
+		return target.User{}, errors.Join(joined...) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	case 3:
+		// The results of a call are not checked
+		return target.User{}, errors.Join(notFoundAndNil()) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	case 4:
+		return target.User{}, errs.JoinLookup(err) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	case 5:
+		return target.User{}, errs.JoinBoth(errs.ErrNotFound, nil) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	return target.User{}, errs.JoinAll(errs.ErrNotFound) // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }

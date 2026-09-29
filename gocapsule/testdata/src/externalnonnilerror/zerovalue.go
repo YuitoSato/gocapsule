@@ -289,6 +289,12 @@ func ReturnZeroWithNamedErrorJoinedInDefer() (u target.User, err error) {
 	return target.User{}, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }
 
+// OK: errors.Join with a non-nil argument in a deferred function
+func ReturnZeroWithNamedErrorJoinedWithSentinelInDefer() (u target.User, err error) {
+	defer func() { err = errors.Join(err, target.ErrNotFound) }()
+	return target.User{}, errors.New("failed")
+}
+
 type closer struct{}
 
 func (closer) Close() error { return nil }
@@ -566,7 +572,9 @@ var errUninitialized error
 
 var errNilSentinel error = nil
 
-var errJoinedSentinel = errors.Join(target.ErrNotFound)
+var errJoinedSentinel = errors.Join(target.ErrNotFound) // want errJoinedSentinel:`nonNilError`
+
+var errJoinedNilableSentinel = errors.Join(errUninitialized)
 
 var errReassignedSentinel = errors.New("reassigned")
 
@@ -593,6 +601,8 @@ func ReturnZeroWithSentinelError(n int) (target.User, error) {
 		return target.User{}, errAliasSentinel
 	case 4:
 		return target.User{}, errRewrappedSentinel
+	case 5:
+		return target.User{}, errJoinedSentinel
 	}
 	return target.User{}, errConcreteSentinel
 }
@@ -605,7 +615,7 @@ func ReturnZeroWithNilableSentinelError(n int) (target.User, error) {
 	case 1:
 		return target.User{}, errNilSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	case 2:
-		return target.User{}, errJoinedSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		return target.User{}, errJoinedNilableSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	case 3:
 		return target.User{}, errReassignedSentinel // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	}
