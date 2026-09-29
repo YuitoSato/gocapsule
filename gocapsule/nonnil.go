@@ -19,28 +19,94 @@ var (
 	errorInterface = errorType.Underlying().(*types.Interface)
 )
 
-// exportNonNilErrorFacts exports facts for package-level error variables that
-// are initialized with a non-nil value and never set to a possibly nil value
-// in the package, such as `var ErrNotFound = errors.New("not found")`.
-func exportNonNilErrorFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
-	// Initializers are in dependency order, so `var ErrB = ErrA` sees the fact of ErrA
+// exportNonNilFacts exports facts for package-level error variables that are
+// never nil and functions that return non-nil errors. They may depend on each
+// other in any order,
+// e.g. `var ErrX = newError("x")` and `func notFound() error { return
+// ErrNotFound }`, so this repeats until no new fact is found.
+func exportNonNilFacts(pass *analysis.Pass, inspect *inspector.Inspector) {
+	vars := nonNilErrorCandidates(pass)
+	funcs := nonNilResultCandidates(pass, inspect)
+	log := &factLog{pass: pass, order: make(map[types.Object]int)}
+	varsChecked := -1
+	for {
+		n := log.len()
+		// Variables depend on facts through their initializers and assignments
+		// anywhere in the package, so they are checked again after any new fact
+		if varsChecked < log.len() {
+			varsChecked = log.len()
+			vars = exportNonNilErrorFacts(pass, inspect, log, vars)
+		}
+		funcs = exportNonNilResultFacts(pass, log, funcs)
+		if log.len() == n {
+			break
+		}
+	}
+}
+
+// factLog records the order in which facts are exported in the current
+// package, so that a candidate is checked again only after a fact it depends
+// on is exported.
+type factLog struct {
+	pass  *analysis.Pass
+	order map[types.Object]int
+}
+
+// export exports fact for obj.
+func (l *factLog) export(obj types.Object, fact analysis.Fact) {
+	l.pass.ExportObjectFact(obj, fact)
+	l.order[obj] = len(l.order)
+}
+
+// len returns the number of exported facts.
+func (l *factLog) len() int {
+	return len(l.order)
+}
+
+// exportedSince reports whether a fact for one of objs was exported after
+// the first n facts.
+func (l *factLog) exportedSince(objs []types.Object, n int) bool {
+	for _, obj := range objs {
+		if i, ok := l.order[obj]; ok && i >= n {
+			return true
+		}
+	}
+	return false
+}
+
+// nonNilErrorCandidates returns the initializers of single package-level
+// error variables, in dependency order.
+func nonNilErrorCandidates(pass *analysis.Pass) []*types.Initializer {
 	var candidates []*types.Initializer
 	for _, init := range pass.TypesInfo.InitOrder {
 		if len(init.Lhs) == 1 && init.Lhs[0].Name() != "_" && implementsError(init.Lhs[0].Type()) {
 			candidates = append(candidates, init)
 		}
 	}
+	return candidates
+}
+
+// exportNonNilErrorFacts exports facts for the candidate variables that are
+// initialized with a non-nil value and never set to a possibly nil value in
+// the package, such as `var ErrNotFound = errors.New("not found")`, and
+// returns the remaining candidates.
+func exportNonNilErrorFacts(pass *analysis.Pass, inspect *inspector.Inspector, log *factLog, candidates []*types.Initializer) []*types.Initializer {
 	if len(candidates) == 0 {
-		return
+		return nil
 	}
 
+	// Initializers are in dependency order, so `var ErrB = ErrA` sees the fact of ErrA
 	nilable := nilablePackageVars(pass, inspect)
+	var remaining []*types.Initializer
 	for _, init := range candidates {
 		v := init.Lhs[0]
 		if !nilable[v] && isNonNilExpr(pass, init.Rhs, v.Type()) {
-			pass.ExportObjectFact(v, new(NonNilError))
+			log.export(v, new(NonNilError))
+		} else {
+			remaining = append(remaining, init)
 		}
 	}
+	return remaining
 }
 
 // nilablePackageVars returns the package-level variables that may be set to
@@ -135,14 +201,31 @@ func enclosingSignature(pass *analysis.Pass, cur inspector.Cursor) *types.Signat
 	return nil
 }
 
-// isNonNilOperand checks if the return operand at cur is guaranteed to be a
-// non-nil value of resultType, taking nil checks before it into account.
-func isNonNilOperand(pass *analysis.Pass, cur inspector.Cursor, resultType types.Type) bool {
-	expr := ast.Unparen(cur.Node().(ast.Expr))
-	if ident, ok := expr.(*ast.Ident); ok && isGuardedNonNil(pass, cur, ident) {
-		return true
+// isNonNilOperand checks if the operand at cur is guaranteed to be a non-nil
+// value of typ, taking nil checks before it into account.
+func isNonNilOperand(pass *analysis.Pass, cur inspector.Cursor, typ types.Type) bool {
+	for {
+		if _, ok := cur.Node().(*ast.ParenExpr); !ok {
+			break
+		}
+		cur = cur.ChildAt(edge.ParenExpr_X, -1)
 	}
-	return isNonNilExpr(pass, expr, resultType)
+
+	switch e := cur.Node().(type) {
+	case *ast.Ident:
+		if isGuardedNonNil(pass, cur, e) {
+			return true
+		}
+	case *ast.CallExpr:
+		// The arguments may be guaranteed to be non-nil by nil checks, e.g.
+		// `if err != nil { return T{}, Wrap(err) }`
+		if isNonNilIfArgs(pass, e, func(i int, typ types.Type) bool {
+			return isNonNilOperand(pass, cur.ChildAt(edge.CallExpr_Args, i), typ)
+		}) {
+			return true
+		}
+	}
+	return isNonNilExpr(pass, cur.Node().(ast.Expr), typ)
 }
 
 // isNonNilExpr checks if expr is always a non-nil value of typ, regardless of
@@ -157,7 +240,9 @@ func isNonNilExpr(pass *analysis.Pass, expr ast.Expr, typ types.Type) bool {
 			return true
 		}
 	case *ast.CallExpr:
-		if isNonNilCall(pass, e) {
+		if isNonNilCall(pass, e) || isNonNilIfArgs(pass, e, func(i int, typ types.Type) bool {
+			return isNonNilExpr(pass, e.Args[i], typ)
+		}) {
 			return true
 		}
 	case *ast.Ident:
@@ -190,6 +275,51 @@ func isNonNilCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	}
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
 	return ok && (fn.FullName() == "errors.New" || fn.FullName() == "fmt.Errorf")
+}
+
+// isNonNilIfArgs checks if call returns a non-nil value provided that some of
+// its arguments are non-nil, which isNonNilArg checks given the index and the
+// type of each such argument: a conversion to an interface or pointer type,
+// e.g. `error(&MyError{})`, or a call to a function with the NonNilResult
+// fact, whose error arguments at the Params of the fact must be non-nil.
+func isNonNilIfArgs(pass *analysis.Pass, call *ast.CallExpr, isNonNilArg func(i int, typ types.Type) bool) bool {
+	if tv, ok := pass.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
+		if _, ok := tv.Type.(*types.TypeParam); ok || len(call.Args) != 1 {
+			return false
+		}
+		switch tv.Type.Underlying().(type) {
+		case *types.Interface, *types.Pointer:
+			return isNonNilArg(0, tv.Type)
+		}
+		return false
+	}
+
+	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
+	fact := new(NonNilResult)
+	if !ok || !pass.ImportObjectFact(fn.Origin(), fact) {
+		return false
+	}
+	sig, ok := pass.TypesInfo.TypeOf(call.Fun).(*types.Signature)
+	if !ok {
+		return false
+	}
+	// f(g()) passes the results of g as the arguments
+	if len(call.Args) == 1 {
+		if _, ok := pass.TypesInfo.TypeOf(call.Args[0]).(*types.Tuple); ok {
+			return false
+		}
+	}
+
+	// A method expression such as (*T).Wrap takes the receiver as the first
+	// argument. The parameters of the fact are error parameters, so none of
+	// them is variadic, and each has its own argument.
+	offset := sig.Params().Len() - fn.Signature().Params().Len()
+	for _, i := range fact.Params {
+		if !isNonNilArg(i+offset, sig.Params().At(i+offset).Type()) {
+			return false
+		}
+	}
+	return true
 }
 
 // isNonNilVar checks if ident refers to a package-level variable that is
@@ -372,6 +502,28 @@ func impliesNonNil(pass *analysis.Pass, cond ast.Expr, obj types.Object, condVal
 	return false
 }
 
+// impliesNil checks if cond evaluating to condValue guarantees obj == nil.
+func impliesNil(pass *analysis.Pass, cond ast.Expr, obj types.Object, condValue bool) bool {
+	switch e := ast.Unparen(cond).(type) {
+	case *ast.UnaryExpr:
+		if e.Op == token.NOT {
+			return impliesNil(pass, e.X, obj, !condValue)
+		}
+	case *ast.BinaryExpr:
+		switch e.Op {
+		case token.EQL:
+			return condValue && isNilComparison(pass, e, obj)
+		case token.NEQ:
+			return !condValue && isNilComparison(pass, e, obj)
+		case token.LAND:
+			return condValue && (impliesNil(pass, e.X, obj, true) || impliesNil(pass, e.Y, obj, true))
+		case token.LOR:
+			return !condValue && (impliesNil(pass, e.X, obj, false) || impliesNil(pass, e.Y, obj, false))
+		}
+	}
+	return false
+}
+
 // isErrorMatch checks if call is errors.As(obj, ...) or errors.Is(obj, target)
 // with a non-nil target. Both return false when obj is nil.
 func isErrorMatch(pass *analysis.Pass, call *ast.CallExpr, obj types.Object) bool {
@@ -510,4 +662,19 @@ func isLocalVar(v *types.Var) bool {
 // implementsError checks if a type implements the error interface.
 func implementsError(typ types.Type) bool {
 	return types.Implements(typ, errorInterface)
+}
+
+// isErrorInterface checks if typ is an interface that implements error.
+func isErrorInterface(typ types.Type) bool {
+	return types.IsInterface(typ) && implementsError(typ)
+}
+
+// isNilableError checks if typ is an interface or a pointer that implements
+// error.
+func isNilableError(typ types.Type) bool {
+	switch typ.Underlying().(type) {
+	case *types.Interface, *types.Pointer:
+		return implementsError(typ)
+	}
+	return false
 }
