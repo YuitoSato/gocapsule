@@ -7,11 +7,13 @@ func TestNewWithSettings(t *testing.T) {
 	defer func() {
 		ignorePackages = nil
 		allowZero = false
+		allowZeroWithFalseOk = false
 	}()
 
 	_, err := New(map[string]any{
-		"ignorePackages": []any{"net/http", " database/sql "},
-		"allowZero":      true,
+		"ignorePackages":       []any{"net/http", " database/sql "},
+		"allowZero":            true,
+		"allowZeroWithFalseOk": true,
 	})
 	if err != nil {
 		t.Fatalf("New() returned an error: %v", err)
@@ -22,6 +24,9 @@ func TestNewWithSettings(t *testing.T) {
 	}
 	if !allowZero {
 		t.Errorf("allowZero = false, want true")
+	}
+	if !allowZeroWithFalseOk {
+		t.Errorf("allowZeroWithFalseOk = false, want true")
 	}
 }
 
@@ -35,6 +40,9 @@ func TestNewWithoutSettings(t *testing.T) {
 	}
 	if allowZero {
 		t.Errorf("allowZero = true, want false")
+	}
+	if allowZeroWithFalseOk {
+		t.Errorf("allowZeroWithFalseOk = true, want false")
 	}
 }
 

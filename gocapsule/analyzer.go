@@ -17,6 +17,11 @@ var ignorePackages packageSet
 // types (T{}, &T{}, var v T, new(T)).
 var allowZero bool
 
+// allowZeroWithFalseOk allows zero values of encapsulated types returned
+// together with a last bool result that is guaranteed to be false, which is
+// treated as the ok of the comma-ok idiom.
+var allowZeroWithFalseOk bool
+
 // Analyzer is the gocapsule analyzer that enforces encapsulation.
 var Analyzer = &analysis.Analyzer{
 	Name:      "gocapsule",
@@ -31,6 +36,8 @@ func init() {
 		"comma-separated `list` of package paths to ignore (e.g., net/http,database/sql)")
 	Analyzer.Flags.BoolVar(&allowZero, "allowZero", false,
 		"allow zero values of encapsulated types (T{}, &T{}, var v T, new(T))")
+	Analyzer.Flags.BoolVar(&allowZeroWithFalseOk, "allowZeroWithFalseOk", false,
+		"allow zero values of encapsulated types (T{}, &T{}, new(T)) returned with a false ok as the last result, e.g. return T{}, false")
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

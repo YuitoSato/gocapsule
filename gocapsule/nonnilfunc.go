@@ -344,7 +344,7 @@ func newNilAnalysis(pass *analysis.Pass, c *funcCandidate) *nilAnalysis {
 				a.untracked[v] = true
 			case *ast.AssignStmt:
 				// A function literal may run at any time
-				if isInNestedFunc(cur, v) && !assignsNonNil(pass, n, v) {
+				if isInNestedFunc(cur, v) && !assigns(pass, n, v, nonNilGuarantee) {
 					a.untracked[v] = true
 				}
 			}

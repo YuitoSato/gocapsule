@@ -1096,3 +1096,8 @@ func ReturnZeroWithShadowedBuiltins(n int) (target.User, error) {
 	}
 	return target.User{}, err // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }
+
+// Violation: a false ok is not trusted without -allowZeroWithFalseOk
+func ReturnZeroWithFalseOk() (target.User, bool) {
+	return target.User{}, false // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}

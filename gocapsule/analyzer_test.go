@@ -59,3 +59,22 @@ func TestAnalyzerWithAllowZero(t *testing.T) {
 		"externalallowzero",
 	)
 }
+
+func TestAnalyzerWithAllowZeroWithFalseOk(t *testing.T) {
+	testdata := analysistest.TestData()
+
+	// Set the allowZeroWithFalseOk flag
+	if err := gocapsule.Analyzer.Flags.Set("allowZeroWithFalseOk", "true"); err != nil {
+		t.Fatalf("failed to set allowZeroWithFalseOk flag: %v", err)
+	}
+
+	// Reset flag after test
+	defer func() {
+		_ = gocapsule.Analyzer.Flags.Set("allowZeroWithFalseOk", "false")
+	}()
+
+	// Run tests - zero values returned with a false ok should be allowed
+	analysistest.Run(t, testdata, gocapsule.Analyzer,
+		"externalfalseok",
+	)
+}
