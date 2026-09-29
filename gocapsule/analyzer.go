@@ -17,6 +17,10 @@ var ignorePackages packageSet
 // types (T{}, &T{}, var v T, new(T)).
 var allowZero bool
 
+// allowZeroWithNonNilError allows zero values of encapsulated types returned
+// together with an error result that is guaranteed to be non-nil.
+var allowZeroWithNonNilError bool
+
 // allowZeroWithFalseOk allows zero values of encapsulated types returned
 // together with a last bool result that is guaranteed to be false, which is
 // treated as the ok of the comma-ok idiom.
@@ -36,6 +40,8 @@ func init() {
 		"comma-separated `list` of package paths to ignore (e.g., net/http,database/sql)")
 	Analyzer.Flags.BoolVar(&allowZero, "allowZero", false,
 		"allow zero values of encapsulated types (T{}, &T{}, var v T, new(T))")
+	Analyzer.Flags.BoolVar(&allowZeroWithNonNilError, "allowZeroWithNonNilError", false,
+		"allow zero values of encapsulated types (T{}, &T{}, new(T)) returned with a non-nil error, e.g. return T{}, err inside if err != nil")
 	Analyzer.Flags.BoolVar(&allowZeroWithFalseOk, "allowZeroWithFalseOk", false,
 		"allow zero values of encapsulated types (T{}, &T{}, new(T)) returned with a false ok as the last result, e.g. return T{}, false")
 }
@@ -44,9 +50,13 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
 	// Phase 1: Detect and export facts about types with New** constructors,
-	// and sentinel errors and functions that never return nil
+	// and sentinel errors and functions that never return nil. The latter are
+	// only used to allow zero values returned with a non-nil error, so they
+	// are skipped otherwise, e.g. with -allowZero, which allows all zero values
 	exportConstructorFacts(pass, inspect)
-	exportNonNilFacts(pass, inspect)
+	if allowZeroWithNonNilError && !allowZero {
+		exportNonNilFacts(pass, inspect)
+	}
 
 	// Phase 2: Detect violations (struct literals, zero values, type conversions, and field assignments)
 	detectViolations(pass, inspect)

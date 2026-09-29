@@ -1,9 +1,21 @@
 package externalallowzero
 
-import "target"
+import (
+	"errors"
+
+	"target"
+)
 
 // OK: package-level zero value declaration
 var globalUser target.User
+
+// OK: no facts are exported for sentinel errors and error helpers, which are
+// not needed when all zero values are allowed
+var errNotFound = errors.New("not found")
+
+func newError(msg string) error {
+	return errors.New(msg)
+}
 
 func TestAllowZero() {
 	// OK: zero values are allowed

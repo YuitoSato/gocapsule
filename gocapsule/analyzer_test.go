@@ -12,11 +12,31 @@ func TestAnalyzer(t *testing.T) {
 	testdata := analysistest.TestData()
 
 	// Run tests on all test packages
-	// The order matters: target and errs must be analyzed before external
+	// The order matters: target must be analyzed before external
 	analysistest.Run(t, testdata, gocapsule.Analyzer,
 		"target",
-		"errs",
 		"external",
+	)
+}
+
+func TestAnalyzerWithAllowZeroWithNonNilError(t *testing.T) {
+	testdata := analysistest.TestData()
+
+	// Set the allowZeroWithNonNilError flag
+	if err := gocapsule.Analyzer.Flags.Set("allowZeroWithNonNilError", "true"); err != nil {
+		t.Fatalf("failed to set allowZeroWithNonNilError flag: %v", err)
+	}
+
+	// Reset flag after test
+	defer func() {
+		_ = gocapsule.Analyzer.Flags.Set("allowZeroWithNonNilError", "false")
+	}()
+
+	// Run tests - zero values returned with a non-nil error should be allowed
+	// The order matters: errs must be analyzed before externalnonnilerror
+	analysistest.Run(t, testdata, gocapsule.Analyzer,
+		"errs",
+		"externalnonnilerror",
 	)
 }
 
@@ -44,14 +64,18 @@ func TestAnalyzerWithIgnorePackages(t *testing.T) {
 func TestAnalyzerWithAllowZero(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	// Set the allowZero flag
-	if err := gocapsule.Analyzer.Flags.Set("allowZero", "true"); err != nil {
-		t.Fatalf("failed to set allowZero flag: %v", err)
+	// Set the allowZero flag. allowZeroWithNonNilError is set too, to check
+	// that allowZero skips the facts that it needs
+	for _, name := range []string{"allowZero", "allowZeroWithNonNilError"} {
+		if err := gocapsule.Analyzer.Flags.Set(name, "true"); err != nil {
+			t.Fatalf("failed to set %s flag: %v", name, err)
+		}
 	}
 
-	// Reset flag after test
+	// Reset flags after test
 	defer func() {
 		_ = gocapsule.Analyzer.Flags.Set("allowZero", "false")
+		_ = gocapsule.Analyzer.Flags.Set("allowZeroWithNonNilError", "false")
 	}()
 
 	// Run tests - zero values of encapsulated types should be allowed

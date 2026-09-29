@@ -5,7 +5,7 @@ A Go linter that enforces encapsulation by preventing direct struct creation, ze
 ## Features
 
 - **Prevent direct struct literal creation**: If a package has a `New` or `NewXxx` constructor, external packages cannot create the struct directly using struct literals
-- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors, except when returned together with a non-nil error or, with `-allowZeroWithFalseOk` (v1.1.0+), a false ok. Use `-allowZero` to allow all of them
+- **Prevent zero value creation** (v1.0.0+): External packages cannot create zero values (`T{}`, `&T{}`, `var v T`, `new(T)`) of types with constructors. Use `-allowZeroWithNonNilError` or `-allowZeroWithFalseOk` (v1.1.0+) to allow those returned together with a non-nil error or a false ok, and `-allowZero` to allow all of them
 - **Prevent direct type conversion**: For defined types (e.g., `type Email string`) with constructors, external packages cannot use direct type conversions
 - **Prevent field reassignment**: External packages cannot reassign public fields of structs that have constructors
 - **Embedded field support**: Detects violations through embedded field access (e.g., `container.User.Name = "x"`)
@@ -59,7 +59,7 @@ gocapsule -allowZero ./...
 | `&users.User{Name: ""}` | ❌ Reported | ❌ Reported |
 | `email.Email("")` | ❌ Reported | ❌ Reported |
 
-See [Zero Values](#zero-values-v100) for examples, including zero values that are allowed because they are returned with a non-nil error.
+See [Zero Values](#zero-values-v100) for examples. To allow only zero values returned with a non-nil error or a false ok, use the flags below instead. With `-allowZero`, they have no effect.
 
 Standard library types whose zero value is ready to use, such as `bytes.Buffer` (`var buf bytes.Buffer`), `math/big.Int` (`new(big.Int)`), and `reflect.Value`, have constructors and are therefore reported by default too. To allow them while keeping zero values of your own types reported, ignore those packages instead of using `-allowZero`. These types have no exported fields, so ignoring their packages loses no other checks:
 
@@ -67,9 +67,21 @@ Standard library types whose zero value is ready to use, such as `bytes.Buffer` 
 gocapsule -ignorePackages="bytes,math/big,reflect" ./...
 ```
 
+#### Allow Zero Values Returned with a Non-Nil Error (v1.1.0+)
+
+Use the `-allowZeroWithNonNilError` flag to allow a zero value returned together with an error that is guaranteed to be non-nil, e.g. `return user.User{}, err` inside `if err != nil`:
+
+```bash
+gocapsule -allowZeroWithNonNilError ./...
+```
+
+This is opt-in so that the default is the strictest and the fastest. To prove that an error is non-nil, gocapsule analyzes the sentinel errors and error helpers of every package, including your dependencies, which it skips without this flag. Without it, a function that fails can return a nil pointer instead, e.g. `return nil, err`.
+
+See [Zero Values](#zero-values-v100) for examples. The exact conditions are listed in rules 6 and 7 of [Rules](#rules). v1.0.0 allowed these zero values by default; see [Migrating from v1.0.x](#migrating-from-v10x).
+
 #### Allow Zero Values Returned with a False Ok (v1.1.0+)
 
-A zero value returned together with a non-nil error is allowed by default. Use the `-allowZeroWithFalseOk` flag to also allow a zero value returned together with a false ok, as in the comma-ok idiom:
+Use the `-allowZeroWithFalseOk` flag to allow a zero value returned together with a false ok, as in the comma-ok idiom:
 
 ```bash
 gocapsule -allowZeroWithFalseOk ./...
@@ -125,6 +137,8 @@ linters:
         settings:
           # Optional: allow zero values (default: false)
           allowZero: false
+          # Optional (v1.1.0+): allow zero values returned with a non-nil error (default: false)
+          allowZeroWithNonNilError: false
           # Optional (v1.1.0+): allow zero values returned with a false ok (default: false)
           allowZeroWithFalseOk: false
           # Optional: package paths to ignore
@@ -231,7 +245,7 @@ func main() {
 }
 ```
 
-A zero value returned together with an error that is guaranteed to be non-nil is allowed, because the caller cannot use it without ignoring the error:
+With `-allowZeroWithNonNilError` (v1.1.0+), a zero value returned together with an error that is guaranteed to be non-nil is allowed, because the caller cannot use it without ignoring the error. Without the flag, all of the following zero values are reported:
 
 ```go
 var ErrNotFound = errors.New("not found")
@@ -327,8 +341,8 @@ func main() {
 2. **Same package allowed**: Code within the same package can freely create types and modify fields
 3. **No constructor = no restriction**: Types without `New**` constructors have no restrictions
 4. **Supported types**: Both structs and defined types (e.g., `type Email string`) are supported. Interfaces are not (v1.0.0+): a constructor returning an interface, e.g. `NewStore() Store`, does not restrict `Store`, since an interface has nothing to encapsulate
-5. **Zero values** (v1.0.0+): `T{}`, `&T{}`, `var v T` (without an initializer), and `new(T)` are reported unless `-allowZero` is set. Type aliases of `T` are treated as `T`. Only `T` itself is checked: `var p *T` and `new(*T)` are allowed. A struct literal with any field, even `T{Name: ""}`, is a regular struct literal and is always reported
-6. **Zero values returned with an error** (v1.0.0+): `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement together with an error result that is guaranteed to be non-nil.
+5. **Zero values** (v1.0.0+): `T{}`, `&T{}`, `var v T` (without an initializer), and `new(T)` are reported unless `-allowZero` is set, or they are allowed by rule 6 or 8. Type aliases of `T` are treated as `T`. Only `T` itself is checked: `var p *T` and `new(*T)` are allowed. A struct literal with any field, even `T{Name: ""}`, is a regular struct literal and is always reported
+6. **Zero values returned with a non-nil error** (v1.0.0+, opt-in since v1.1.0): if `-allowZeroWithNonNilError` is set, `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement together with an error result that is guaranteed to be non-nil.
 
    The following are **non-nil expressions**:
    - `errors.New(...)` or `fmt.Errorf(...)`
@@ -355,7 +369,7 @@ func main() {
 
    (v1.1.0+) Directly in the `return` statement, the operand of a conversion, or an argument for an error parameter that a verified function requires to be non-nil, can also be a local variable guaranteed to be non-nil as described above, even in a nested call, e.g. `errs.Wrap(err, "...")` or `errs.Wrap(errs.WithCode(err, 404), "...")` inside `if err != nil`.
 
-7. **Verified functions** (v1.1.0+): a function is verified if gocapsule can prove that it returns a non-nil error whenever certain error parameters (interfaces and pointers that implement `error`), possibly none, are non-nil. gocapsule verifies the functions and methods whose only result is an interface that implements `error`, including generic ones and those in your dependencies, and records which error parameters must be non-nil. A function that needs none of them, such as `errs.New(msg string) error`, always returns a non-nil error. Functions that return a concrete type such as `*MyError` are already non-nil expressions by rule 6.
+7. **Verified functions** (v1.1.0+): a function is verified if gocapsule can prove that it returns a non-nil error whenever certain error parameters (interfaces and pointers that implement `error`), possibly none, are non-nil. gocapsule verifies the functions and methods whose only result is an interface that implements `error`, including generic ones and those in your dependencies, and records which error parameters must be non-nil. A function that needs none of them, such as `errs.New(msg string) error`, always returns a non-nil error. Functions that return a concrete type such as `*MyError` are already non-nil expressions by rule 6. Like sentinel errors, functions are verified only if `-allowZeroWithNonNilError` is set.
 
    Unlike rule 6, gocapsule follows every path through the function. It assumes that the error parameters are non-nil at the start, and tracks which local variables of interface and pointer types are non-nil:
    - a variable is non-nil after it is assigned a value that is non-nil at that point, e.g. `err = errs.WithStack(err)` for a non-nil `err`, and in the branch of a nil check, e.g. `if err != nil`, `if err == nil { ... } else`, or `switch { case err != nil: }`
@@ -404,7 +418,7 @@ func main() {
    }
    ```
 
-8. **Zero values returned with a false ok** (v1.1.0+): if `-allowZeroWithFalseOk` is set, `T{}`, `&T{}`, and `new(T)` are also allowed when they appear directly in a `return` statement whose last result is a `bool` (or a type whose underlying type is `bool`) that is guaranteed to be false. Only the last result is treated as the ok: in `func f() (T, bool, error)`, `return T{}, false, nil` is reported.
+8. **Zero values returned with a false ok** (v1.1.0+): if `-allowZeroWithFalseOk` is set, `T{}`, `&T{}`, and `new(T)` are allowed when they appear directly in a `return` statement whose last result is a `bool` (or a type whose underlying type is `bool`) that is guaranteed to be false. Only the last result is treated as the ok: in `func f() (T, bool, error)`, `return T{}, false, nil` is reported.
 
    A **false expression** is a constant false, e.g. `false`, `!true`, or `notFound` declared as `const notFound = false`. A **false assignment** is a single assignment of a false expression, e.g. `ok = false` or `ok := false`, or a declaration without a value, e.g. `var ok bool`.
 
@@ -420,6 +434,17 @@ func main() {
    - `ok` must never have its address taken, and function literals nested in the function that declares `ok` must only assign it by false assignments
 
    If the ok result is named, e.g. `func f() (u user.User, ok bool)`, the last condition also applies to the named result `ok`, even when the `return` statement returns `false`, because a deferred call can overwrite a named result after the `return`, e.g. `defer func() { ok = true }()`
+
+## Migrating from v1.0.x
+
+v1.1.0 reports zero values returned with a non-nil error by default, so that the default is the strictest and the fastest:
+
+| Code | v1.0.x | v1.1.0 |
+|------|--------|--------|
+| `return users.User{}, err` inside `if err != nil` | Allowed | Reported (allowed with `-allowZeroWithNonNilError`) |
+| `return users.User{}, errors.New("...")` | Allowed | Reported (allowed with `-allowZeroWithNonNilError`) |
+
+To keep the v1.0.x behavior, set `-allowZeroWithNonNilError` (or `allowZeroWithNonNilError: true` in golangci-lint). With it, v1.1.0 also trusts error helpers verified by rule 7 of [Rules](#rules), so it reports fewer zero values than v1.0.x.
 
 ## Migrating from v0.x
 
@@ -467,7 +492,7 @@ Zero values are detected syntactically, without data flow analysis. The followin
 
 A sentinel error is trusted to be non-nil only if its own package never assigns it a possibly nil value. Another package can still reassign an exported one (e.g. `user.ErrNotFound = nil`); such reassignments are not detected.
 
-The following are **reported** even though the zero value is safe. The data flow analysis of rule 7 only verifies error helpers: the `return` statement that returns a zero value is still checked syntactically by rule 6. Rewrite them in one of the supported forms:
+The following are **reported** even though the zero value is safe. The rows about errors apply with `-allowZeroWithNonNilError`: the data flow analysis of rule 7 only verifies error helpers, and the `return` statement that returns a zero value is still checked syntactically by rule 6. Rewrite them in one of the supported forms:
 
 | Pattern | Workaround |
 |---------|------------|
