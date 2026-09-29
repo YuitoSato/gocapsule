@@ -239,8 +239,9 @@ func isNonNilCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 // isNonNilIfArgs checks if call returns a non-nil value provided that some of
 // its arguments are non-nil, which isNonNilArg checks given the index and the
 // type of each such argument: a conversion to an interface or pointer type,
-// e.g. `error(&MyError{})`, or a call to a function with the NonNilResult
-// fact, whose error arguments at the Params of the fact must be non-nil.
+// e.g. `error(&MyError{})`, a call to errors.Join, one of whose arguments
+// must be non-nil, or a call to a function with the NonNilResult fact, whose
+// error arguments at the Params of the fact must be non-nil.
 func isNonNilIfArgs(pass *analysis.Pass, call *ast.CallExpr, isNonNilArg func(i int, typ types.Type) bool) bool {
 	if tv, ok := pass.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
 		if _, ok := tv.Type.(*types.TypeParam); ok || len(call.Args) != 1 {
@@ -254,11 +255,6 @@ func isNonNilIfArgs(pass *analysis.Pass, call *ast.CallExpr, isNonNilArg func(i 
 	}
 
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
-	fact := new(NonNilResult)
-	if !ok || !pass.ImportObjectFact(fn.Origin(), fact) {
-		return false
-	}
-	sig, ok := pass.TypesInfo.TypeOf(call.Fun).(*types.Signature)
 	if !ok {
 		return false
 	}
@@ -267,6 +263,28 @@ func isNonNilIfArgs(pass *analysis.Pass, call *ast.CallExpr, isNonNilArg func(i 
 		if _, ok := pass.TypesInfo.TypeOf(call.Args[0]).(*types.Tuple); ok {
 			return false
 		}
+	}
+	// errors.Join returns nil only if every argument is nil, so one non-nil
+	// argument is enough. The elements of a slice passed as `errs...` are not
+	// checked. FullName is not used, since it allocates for every call.
+	if fn.Name() == "Join" && fn.Pkg() != nil && fn.Pkg().Path() == "errors" {
+		if call.Ellipsis.IsValid() {
+			return false
+		}
+		for i := range call.Args {
+			if isNonNilArg(i, errorType) {
+				return true
+			}
+		}
+		return false
+	}
+	fact := new(NonNilResult)
+	if !pass.ImportObjectFact(fn.Origin(), fact) {
+		return false
+	}
+	sig, ok := pass.TypesInfo.TypeOf(call.Fun).(*types.Signature)
+	if !ok {
+		return false
 	}
 
 	// A method expression such as (*T).Wrap takes the receiver as the first

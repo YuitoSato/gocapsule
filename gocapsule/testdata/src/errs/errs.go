@@ -276,6 +276,27 @@ func wrappedNotFound() error { // want wrappedNotFound:`nonNilResult\[\]`
 	return ErrWrapped
 }
 
+// OK: errors.Join is non-nil if one of its arguments is
+func JoinNotFound(err error) error { // want JoinNotFound:`nonNilResult\[\]`
+	return errors.Join(err, ErrNotFound)
+}
+
+// OK: lookup may return nil, so only err must be non-nil
+func JoinLookup(err error) error { // want JoinLookup:`nonNilResult\[0\]`
+	return errors.Join(err, lookup())
+}
+
+// OK: either err or other is enough, but the fact can only require all of
+// its parameters, so it requires the last one
+func JoinBoth(err, other error) error { // want JoinBoth:`nonNilResult\[1\]`
+	return errors.Join(err, other)
+}
+
+// Not verified: the elements of errs may all be nil
+func JoinAll(errs ...error) error {
+	return errors.Join(errs...)
+}
+
 // Not verified: returns nil when cond is true
 func MaybeWrap(err error, cond bool) error {
 	if cond {
