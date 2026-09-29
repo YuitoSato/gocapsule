@@ -160,6 +160,38 @@ func ReturnZeroWithFalseAndError() (target.User, bool, error) {
 	return target.User{}, false, errors.New("failed")
 }
 
+// OK: declarations with a false value
+func ReturnZeroWithFalseDeclaration(n int) (target.User, bool) {
+	if n == 0 {
+		var ok = false
+		return target.User{}, ok
+	}
+	var ok bool = !true
+	return target.User{}, ok
+}
+
+// OK: a named ok guaranteed to be false by a check
+func ReturnZeroWithGuardedNamedOk(id string) (u target.User, ok bool) {
+	u, ok = findUser(id)
+	if !ok {
+		return target.User{}, ok
+	}
+	return u, ok
+}
+
+// OK: function literals
+func ReturnZeroInFuncLit() {
+	_ = func() (target.User, bool) {
+		return target.User{}, false
+	}
+	_ = func(id string) (*target.User, bool) {
+		if _, ok := findUser(id); !ok {
+			return &target.User{}, ok
+		}
+		return nil, false
+	}
+}
+
 // Violation: the ok is true
 func ReturnZeroWithTrue(id string) (target.User, bool) {
 	_, ok := findUser(id)
@@ -271,4 +303,77 @@ func ReturnZeroWithUnsupportedChecks(id string, ids []string) (target.User, bool
 // Violation: the named result is not tracked from its zero value
 func ReturnZeroWithUnassignedNamedOk() (u target.User, ok bool) {
 	return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: conditions that do not imply ok == false
+func ReturnZeroWithUnimpliedCondition(id string, cond bool) (target.User, bool) {
+	u, ok := findUser(id)
+	switch {
+	case cond:
+		if ok == true {
+			return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		}
+	case !cond:
+		if ok != false {
+			return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		}
+	default:
+		if ok == cond {
+			return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+		}
+	}
+	if ok || cond {
+		return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	return u, ok
+}
+
+// Violation: an early exit that does not imply ok == false after it
+func ReturnZeroAfterUnimpliedEarlyExit(id string, cond bool) (target.User, bool) {
+	u, ok := findUser(id)
+	if !ok && cond {
+		return u, true
+	}
+	return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: shadowed false is not the constant
+func ReturnZeroWithShadowedFalse() (target.User, bool) {
+	false := true
+	return target.User{}, false // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: package-level variables are not tracked, even if never assigned
+var notFoundVar = false
+
+func ReturnZeroWithPackageLevelOk() (target.User, bool) {
+	return target.User{}, notFoundVar // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: a deferred call may set the named result to true after the check
+func ReturnZeroWithGuardedNamedOkAndDefer(id string) (u target.User, ok bool) {
+	defer func() { ok = true }()
+	u, ok = findUser(id)
+	if !ok {
+		return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+	}
+	return u, ok
+}
+
+// Violation: goto may skip the early exit
+func ReturnZeroAfterGoto(id string, cond bool) (target.User, bool) {
+	u, ok := findUser(id)
+	if cond {
+		goto L
+	}
+	if ok {
+		return u, true
+	}
+L:
+	return target.User{}, ok // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+// Violation: a type parameter is not a bool type, even if constrained to one
+func ReturnZeroWithTypeParamOk[B ~bool]() (target.User, B) {
+	return target.User{}, false // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }
