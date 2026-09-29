@@ -75,11 +75,16 @@ func checkNewCall(pass *analysis.Pass, cur inspector.Cursor, call *ast.CallExpr)
 }
 
 // isReturnedWithFailure checks if the zero value expression at cur is returned
-// together with a result that tells the caller not to use it: an error that is
-// guaranteed to be non-nil, e.g. `return &T{}, err` inside
-// `if err != nil { ... }`, or, with -allowZeroWithFalseOk, a last bool result
-// that is guaranteed to be false, e.g. `return T{}, false`.
+// together with a result that tells the caller not to use it: with
+// -allowZeroWithNonNilError, an error that is guaranteed to be non-nil, e.g.
+// `return &T{}, err` inside `if err != nil { ... }`, or, with
+// -allowZeroWithFalseOk, a last bool result that is guaranteed to be false,
+// e.g. `return T{}, false`.
 func isReturnedWithFailure(pass *analysis.Pass, cur inspector.Cursor) bool {
+	if !allowZeroWithNonNilError && !allowZeroWithFalseOk {
+		return false
+	}
+
 	// Walk up through parentheses and & to the return operand
 	for isParenOrAddr(cur.Parent().Node()) {
 		cur = cur.Parent()
@@ -97,7 +102,7 @@ func isReturnedWithFailure(pass *analysis.Pass, cur inspector.Cursor) bool {
 		return false
 	}
 
-	return isReturnedWithNonNilError(pass, retCur, sig, zeroIndex) ||
+	return allowZeroWithNonNilError && isReturnedWithNonNilError(pass, retCur, sig, zeroIndex) ||
 		allowZeroWithFalseOk && isReturnedWithFalseOk(pass, retCur, sig)
 }
 

@@ -88,8 +88,9 @@ func New(name string) *Repository {
 	return &Repository{Name: name}
 }
 
-// ErrNotFound is a sentinel error
-var ErrNotFound = errors.New("not found") // want ErrNotFound:`nonNilError`
+// ErrNotFound is a sentinel error. It has no fact without
+// -allowZeroWithNonNilError; with it, externalnonnilerror checks its fact
+var ErrNotFound = errors.New("not found")
 
 // AppError is an error type with a constructor
 type AppError struct { // want AppError:`&\{NewAppError\}`

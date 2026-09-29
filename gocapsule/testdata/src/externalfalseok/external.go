@@ -150,16 +150,6 @@ func ReturnZeroWithNestedFalseAssignment(id string) (target.User, bool) {
 	return target.User{}, false
 }
 
-// OK: rule 6 still applies to an error before the ok
-func ReturnZeroWithErrorBeforeOk() (target.User, error, bool) {
-	return target.User{}, errors.New("failed"), true
-}
-
-// OK: returned with a false ok and a non-nil error
-func ReturnZeroWithFalseAndError() (target.User, bool, error) {
-	return target.User{}, false, errors.New("failed")
-}
-
 // OK: declarations with a false value
 func ReturnZeroWithFalseDeclaration(n int) (target.User, bool) {
 	if n == 0 {
@@ -262,6 +252,15 @@ func ReturnZeroWithBoolMethods(id string) (target.User, flag) {
 		return target.User{}, f // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 	}
 	return target.User{}, false
+}
+
+// Violation: a non-nil error is not trusted without -allowZeroWithNonNilError
+func ReturnZeroWithErrorBeforeOk() (target.User, error, bool) {
+	return target.User{}, errors.New("failed"), true // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
+}
+
+func ReturnZeroWithFalseAndError() (target.User, bool, error) {
+	return target.User{}, false, errors.New("failed") // want `direct struct literal creation of User is not allowed; use target.NewUser\(\) instead`
 }
 
 // Violation: the bool is not the last result

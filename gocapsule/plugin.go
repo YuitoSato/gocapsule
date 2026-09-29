@@ -15,6 +15,9 @@ type Settings struct {
 	IgnorePackages []string `json:"ignorePackages"`
 	// AllowZero allows zero values of encapsulated types.
 	AllowZero bool `json:"allowZero"`
+	// AllowZeroWithNonNilError allows zero values of encapsulated types
+	// returned with a non-nil error.
+	AllowZeroWithNonNilError bool `json:"allowZeroWithNonNilError"`
 	// AllowZeroWithFalseOk allows zero values of encapsulated types returned
 	// with a false ok as the last result.
 	AllowZeroWithFalseOk bool `json:"allowZeroWithFalseOk"`
@@ -29,6 +32,7 @@ func New(settings any) (register.LinterPlugin, error) {
 
 	ignorePackages = newPackageSet(s.IgnorePackages)
 	allowZero = s.AllowZero
+	allowZeroWithNonNilError = s.AllowZeroWithNonNilError
 	allowZeroWithFalseOk = s.AllowZeroWithFalseOk
 
 	return &plugin{}, nil

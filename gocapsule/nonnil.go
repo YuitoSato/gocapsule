@@ -130,8 +130,9 @@ func nilablePackageVars(pass *analysis.Pass, inspect *inspector.Inspector) map[*
 
 // isReturnedWithNonNilError checks if an error result of the return statement
 // at retCur, other than the zero value at zeroIndex, is guaranteed to be
-// non-nil, e.g. `return &T{}, err` inside `if err != nil { ... }`. The caller
-// cannot use the zero value without ignoring the error.
+// non-nil, e.g. `return &T{}, err` inside `if err != nil { ... }`. With
+// -allowZeroWithNonNilError, the zero value is then allowed, since the caller
+// cannot use it without ignoring the error.
 func isReturnedWithNonNilError(pass *analysis.Pass, retCur inspector.Cursor, sig *types.Signature, zeroIndex int) bool {
 	for i := range sig.Results().Len() {
 		if i == zeroIndex {
