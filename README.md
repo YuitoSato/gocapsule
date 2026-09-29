@@ -350,6 +350,7 @@ func main() {
    - a value of a concrete (non-interface) type returned as an interface, e.g. `NewAppError(...)` returning `*AppError`. As in Go itself, a nil `*AppError` stored in an `error` is non-nil. Any other function returning `error` is trusted only as described in the next item
    - (v1.1.0+) a call to a verified function (rule 7) whose arguments for the error parameters it requires to be non-nil are non-nil expressions, e.g. `errs.New("...")`, `errs.Wrap(ErrNotFound, "...")`, or `github.com/pkg/errors.New("...")`
    - (v1.1.0+) a conversion of a non-nil expression to an interface or pointer type, e.g. `error(&MyError{})`
+   - (v1.2.0+) a call to `errors.Join` with at least one argument that is a non-nil expression, e.g. `errors.Join(err, ErrNotFound)`, since it returns nil only if every argument is nil. The elements of a slice passed as `errors.Join(errs...)` are not checked
    - a package-level variable (e.g. a sentinel error such as `ErrNotFound` or `io.EOF`) that is initialized with a non-nil expression, and in its own package is only assigned by non-nil assignments and never has its address taken
 
    A **non-nil assignment** is a single assignment of a non-nil expression, e.g. `err = fmt.Errorf("...: %w", err)`, `err := errors.New("...")`, or `var err error = &MyError{}`. A multiple assignment such as `n, err = 0, errors.New("...")` is not.
@@ -367,7 +368,7 @@ func main() {
 
    If the error result is named, e.g. `func f() (u user.User, err error)`, the last condition also applies to the named result `err`, even when the `return` statement returns `errors.New(...)`, because a deferred call can overwrite a named result after the `return`, e.g. `defer func() { err = nil }()`
 
-   (v1.1.0+) Directly in the `return` statement, the operand of a conversion, or an argument for an error parameter that a verified function requires to be non-nil, can also be a local variable guaranteed to be non-nil as described above, even in a nested call, e.g. `errs.Wrap(err, "...")` or `errs.Wrap(errs.WithCode(err, 404), "...")` inside `if err != nil`.
+   (v1.1.0+) Directly in the `return` statement, the operand of a conversion, an argument for an error parameter that a verified function requires to be non-nil, or (v1.2.0+) an argument of `errors.Join`, can also be a local variable guaranteed to be non-nil as described above, even in a nested call, e.g. `errs.Wrap(err, "...")` or `errs.Wrap(errs.WithCode(err, 404), "...")` inside `if err != nil`.
 
 7. **Verified functions** (v1.1.0+): a function is verified if gocapsule can prove that it returns a non-nil error whenever certain error parameters (interfaces and pointers that implement `error`), possibly none, are non-nil. gocapsule verifies the functions and methods whose only result is an interface that implements `error`, including generic ones and those in your dependencies, and records which error parameters must be non-nil. A function that needs none of them, such as `errs.New(msg string) error`, always returns a non-nil error. Functions that return a concrete type such as `*MyError` are already non-nil expressions by rule 6. Like sentinel errors, functions are verified only if `-allowZeroWithNonNilError` is set.
 
@@ -382,6 +383,8 @@ func main() {
    The following were checked with Go 1.26:
    - Verified: the constructors and wrappers of `github.com/pkg/errors`, `github.com/cockroachdb/errors`, `github.com/morikuni/failure/v2`, `github.com/rotisserie/eris`, `github.com/samber/oops`, and `golang.org/x/xerrors`. The functions that initialize standard library sentinel errors such as `os.ErrNotExist` are verified too, so these sentinel errors are non-nil
    - Not verified: `github.com/morikuni/failure` v1 (applies wrappers through an interface method), `errors.Join` and `go.uber.org/multierr` (may return nil), and `google.golang.org/grpc/status.Error` (returns nil for `codes.OK`)
+
+   (v1.2.0+) A call to `errors.Join` with a non-nil argument is still a non-nil expression by rule 6, so a function that returns one can be verified, e.g. `func WithNotFound(err error) error { return errors.Join(err, ErrNotFound) }`. A function that joins several error parameters, e.g. `errors.Join(err, other)`, requires only the last one to be non-nil, since the verification cannot express that either one is enough.
 
    ```go
    // Verified: err is non-nil after both branches and the reassignment
